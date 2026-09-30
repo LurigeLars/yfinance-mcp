@@ -110,7 +110,7 @@ def test_chain_filters_without_hidden_default_limit() -> None:
         "market_state": "REGULAR",
         "regular_market_price": 105.0,
         "regular_market_time": 1790779200,
-        "regular_market_time_utc": "2026-09-30T12:00:00+00:00",
+        "regular_market_time_utc": "2026-09-30T14:40:00+00:00",
     }
     assert "unexpectedUpstreamField" not in result["underlying"]
 
