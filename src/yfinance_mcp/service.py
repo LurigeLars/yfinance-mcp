@@ -3,8 +3,8 @@ from __future__ import annotations
 import math
 import statistics
 from datetime import UTC, datetime, time, timedelta
-from zoneinfo import ZoneInfo
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from .provider import QUOTE_DELAY_NOTICE, SOURCE, ChainSnapshot, YFinanceProvider
 
