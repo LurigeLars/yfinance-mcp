@@ -7,6 +7,9 @@ export const ALL_ALLOWED_TOOLS = [
   'option_positioning_summary',
   'option_surface_summary',
   'option_activity_summary',
+  'option_greeks',
+  'option_risk_map',
+  'option_scenario',
 ].join(',');
 
 export function parseAllowedTools(value) {
