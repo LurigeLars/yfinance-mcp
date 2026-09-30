@@ -5,6 +5,8 @@ export const ALL_ALLOWED_TOOLS = [
   'option_expirations',
   'option_chain',
   'option_positioning_summary',
+  'option_surface_summary',
+  'option_activity_summary',
 ].join(',');
 
 export function parseAllowedTools(value) {
