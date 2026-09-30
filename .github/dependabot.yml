@@ -9,8 +9,12 @@ updates:
       timezone: Europe/Stockholm
     groups:
       python-dependencies:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     open-pull-requests-limit: 2
     labels:
       - dependencies
@@ -26,8 +30,12 @@ updates:
       timezone: Europe/Stockholm
     groups:
       container-images:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     open-pull-requests-limit: 2
     labels:
       - dependencies
@@ -43,8 +51,12 @@ updates:
       timezone: Europe/Stockholm
     groups:
       github-actions:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     open-pull-requests-limit: 2
     labels:
       - dependencies
