@@ -109,6 +109,18 @@ A bounded live provider smoke test is available after installation:
 ```
 
 Authentication and Internet exposure remain deployment-specific. Do not expose the unauthenticated MCP HTTP endpoint directly to the Internet.
+### Protected remote gateway
+
+A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the three read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
+
+Copy `public/gateway.env.example` to the ignored `public/gateway.env`, fill in the deployment-specific Access values, then run:
+
+```powershell
+.\scripts\windows\install-public-gateway.ps1 -AccessAudience <audience>
+```
+
+The installer can also read the team domain and allowed identity values from an existing local gateway env file via `-TemplateGatewayEnvPath`. No real hostname, identity, audience, tunnel ID, token, or credential belongs in Git.
+
 
 ## Development
 

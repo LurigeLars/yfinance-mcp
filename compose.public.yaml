@@ -1,0 +1,41 @@
+# Protected remote path:
+# Cloudflare Access -> shared Tunnel -> JWT-validating gateway -> host-side yfinance MCP.
+# The host MCP server remains loopback-only on 127.0.0.1:8772.
+name: yfinance-mcp-public
+
+services:
+  gateway:
+    image: node:26.10.0-alpine
+    container_name: yfinance-mcp-gateway
+    command: ["node", "/app/gateway.mjs"]
+    user: node
+    env_file:
+      - public/gateway.env
+    environment:
+      GATEWAY_MODE: cloudflare
+      BIND_HOST: 0.0.0.0
+      UPSTREAM_HOST: host.docker.internal
+      UPSTREAM_PORT: "8772"
+      UPSTREAM_PATH: /mcp
+      UPSTREAM_HOST_HEADER: localhost
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./public/gateway:/app:ro
+    networks:
+      edge:
+        aliases:
+          - yfinance-gateway
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 64
+    restart: unless-stopped
+
+networks:
+  edge:
+    driver: bridge
