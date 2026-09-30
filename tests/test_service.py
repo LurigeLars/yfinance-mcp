@@ -147,3 +147,31 @@ def test_fastmcp_server_registers_tools() -> None:
     from yfinance_mcp.server import mcp
 
     assert mcp is not None
+
+
+def test_missing_aggregate_fields_remain_unknown() -> None:
+    snapshot = ChainSnapshot(
+        symbol="TEST",
+        expiry="2026-10-02",
+        retrieved_at="2026-09-30T12:00:00+00:00",
+        underlying={"symbol": "TEST"},
+        calls=[
+            {
+                "contractSymbol": "TESTC100",
+                "strike": 100.0,
+                "volume": None,
+                "openInterest": None,
+                "impliedVolatility": None,
+            }
+        ],
+        puts=[],
+    )
+    service = OptionsService(FakeProvider(snapshot))
+
+    result = service.option_positioning_summary("TEST", "2026-10-02")
+
+    assert result["calls"]["total_volume"] is None
+    assert result["calls"]["total_open_interest"] is None
+    assert result["calls"]["volume_open_interest_ratio"] is None
+    assert result["put_call"]["volume_ratio"] is None
+    assert result["put_call"]["open_interest_ratio"] is None
