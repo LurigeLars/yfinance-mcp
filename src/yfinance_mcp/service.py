@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import math
 import statistics
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Literal
 
 from .provider import QUOTE_DELAY_NOTICE, SOURCE, ChainSnapshot, YFinanceProvider
 
 OptionType = Literal["calls", "puts", "both"]
 ActivitySort = Literal["volume_open_interest_ratio", "volume", "open_interest"]
+ScenarioSort = Literal["open_interest", "absolute_model_change", "gamma_notional"]
 
 
 def _number(value: Any) -> float | None:
@@ -321,6 +323,238 @@ def _activity_view(
     }
 
 
+_NORMAL = statistics.NormalDist()
+_US_EASTERN = ZoneInfo("America/New_York")
+_SECONDS_PER_YEAR = 365.0 * 24.0 * 60.0 * 60.0
+
+
+def _validate_model_inputs(
+    risk_free_rate: float,
+    dividend_yield: float,
+    *,
+    spot_override: float | None = None,
+) -> None:
+    if not math.isfinite(risk_free_rate) or not -1.0 < risk_free_rate < 1.0:
+        raise ValueError("risk_free_rate must be a finite decimal rate between -1 and 1")
+    if not math.isfinite(dividend_yield) or not -1.0 < dividend_yield < 1.0:
+        raise ValueError("dividend_yield must be a finite decimal rate between -1 and 1")
+    if spot_override is not None and (
+        not math.isfinite(spot_override) or spot_override <= 0
+    ):
+        raise ValueError("spot_override must be a positive finite number")
+
+
+def _valuation_spot(
+    underlying: dict[str, Any],
+    spot_override: float | None,
+) -> tuple[float, str]:
+    spot = spot_override
+    source = "caller_override"
+    if spot is None:
+        spot = _number(underlying.get("regularMarketPrice"))
+        source = "yahoo_regular_market_price"
+    if spot is None or spot <= 0:
+        raise ValueError(
+            "A positive underlying spot is required; provide spot_override when Yahoo has no price"
+        )
+    return spot, source
+
+
+def _valuation_time(retrieved_at: str, days_forward: float = 0.0) -> datetime:
+    try:
+        value = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("retrieved_at is not a valid ISO timestamp") from exc
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC) + timedelta(days=days_forward)
+
+
+def _years_to_expiry(
+    expiry: str,
+    retrieved_at: str,
+    *,
+    days_forward: float = 0.0,
+) -> float:
+    try:
+        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("expiry must be YYYY-MM-DD") from exc
+    expiry_time = datetime.combine(expiry_date, time(16, 0), tzinfo=_US_EASTERN)
+    valuation_time = _valuation_time(retrieved_at, days_forward)
+    seconds = (expiry_time.astimezone(UTC) - valuation_time).total_seconds()
+    return max(seconds / _SECONDS_PER_YEAR, 0.0)
+
+
+def _empty_greeks(status: str) -> dict[str, Any]:
+    return {
+        "model_status": status,
+        "model_price": None,
+        "delta": None,
+        "gamma": None,
+        "theta_per_day": None,
+        "vega_per_iv_point": None,
+        "rho_per_rate_point": None,
+    }
+
+
+def _bsm_metrics(
+    option_type: Literal["call", "put"],
+    *,
+    spot: float,
+    strike: float | None,
+    years_to_expiry: float,
+    volatility: float | None,
+    risk_free_rate: float,
+    dividend_yield: float,
+) -> dict[str, Any]:
+    if strike is None or strike <= 0:
+        return _empty_greeks("invalid_strike")
+    if spot <= 0:
+        return _empty_greeks("invalid_spot")
+
+    if years_to_expiry <= 0:
+        if option_type == "call":
+            intrinsic = max(spot - strike, 0.0)
+            delta = 1.0 if spot > strike else 0.0 if spot < strike else None
+        else:
+            intrinsic = max(strike - spot, 0.0)
+            delta = -1.0 if spot < strike else 0.0 if spot > strike else None
+        return {
+            "model_status": "expired_or_at_expiry",
+            "model_price": intrinsic,
+            "delta": delta,
+            "gamma": 0.0,
+            "theta_per_day": 0.0,
+            "vega_per_iv_point": 0.0,
+            "rho_per_rate_point": 0.0,
+        }
+
+    if volatility is None or volatility <= 0:
+        return _empty_greeks("missing_or_nonpositive_iv")
+
+    sqrt_t = math.sqrt(years_to_expiry)
+    sigma_sqrt_t = volatility * sqrt_t
+    d1 = (
+        math.log(spot / strike)
+        + (risk_free_rate - dividend_yield + 0.5 * volatility**2) * years_to_expiry
+    ) / sigma_sqrt_t
+    d2 = d1 - sigma_sqrt_t
+
+    discount_q = math.exp(-dividend_yield * years_to_expiry)
+    discount_r = math.exp(-risk_free_rate * years_to_expiry)
+    pdf_d1 = _NORMAL.pdf(d1)
+
+    gamma = discount_q * pdf_d1 / (spot * sigma_sqrt_t)
+    vega_per_point = spot * discount_q * pdf_d1 * sqrt_t / 100.0
+
+    if option_type == "call":
+        model_price = (
+            spot * discount_q * _NORMAL.cdf(d1)
+            - strike * discount_r * _NORMAL.cdf(d2)
+        )
+        delta = discount_q * _NORMAL.cdf(d1)
+        theta_annual = (
+            -(spot * discount_q * pdf_d1 * volatility) / (2.0 * sqrt_t)
+            - risk_free_rate * strike * discount_r * _NORMAL.cdf(d2)
+            + dividend_yield * spot * discount_q * _NORMAL.cdf(d1)
+        )
+        rho_per_point = (
+            strike * years_to_expiry * discount_r * _NORMAL.cdf(d2) / 100.0
+        )
+    else:
+        model_price = (
+            strike * discount_r * _NORMAL.cdf(-d2)
+            - spot * discount_q * _NORMAL.cdf(-d1)
+        )
+        delta = discount_q * (_NORMAL.cdf(d1) - 1.0)
+        theta_annual = (
+            -(spot * discount_q * pdf_d1 * volatility) / (2.0 * sqrt_t)
+            + risk_free_rate * strike * discount_r * _NORMAL.cdf(-d2)
+            - dividend_yield * spot * discount_q * _NORMAL.cdf(-d1)
+        )
+        rho_per_point = (
+            -strike * years_to_expiry * discount_r * _NORMAL.cdf(-d2) / 100.0
+        )
+
+    return {
+        "model_status": "ok",
+        "model_price": model_price,
+        "delta": delta,
+        "gamma": gamma,
+        "theta_per_day": theta_annual / 365.0,
+        "vega_per_iv_point": vega_per_point,
+        "rho_per_rate_point": rho_per_point,
+    }
+
+
+def _model_assumptions(
+    *,
+    risk_free_rate: float,
+    dividend_yield: float,
+    spot: float,
+    spot_source: str,
+    contract_multiplier: int | None = None,
+) -> dict[str, Any]:
+    result = {
+        "model": "Black-Scholes-Merton",
+        "risk_free_rate_decimal": risk_free_rate,
+        "dividend_yield_decimal": dividend_yield,
+        "spot": spot,
+        "spot_source": spot_source,
+        "time_basis": "ACT/365",
+        "expiry_time_assumption": "16:00 America/New_York on expiry date",
+        "volatility_source": "Yahoo Finance impliedVolatility per contract",
+        "american_style_approximation": True,
+        "model_notice": (
+            "Black-Scholes-Merton is a European-style theoretical approximation. "
+            "It does not model early exercise, discrete dividends, borrow constraints, "
+            "or market microstructure."
+        ),
+    }
+    if contract_multiplier is not None:
+        result["contract_multiplier"] = contract_multiplier
+    return result
+
+
+def _greek_contract_view(
+    row: dict[str, Any],
+    *,
+    option_type: Literal["call", "put"],
+    expiry: str,
+    spot: float,
+    years_to_expiry: float,
+    risk_free_rate: float,
+    dividend_yield: float,
+) -> dict[str, Any]:
+    base = _contract_view(row)
+    metrics = _bsm_metrics(
+        option_type,
+        spot=spot,
+        strike=base["strike"],
+        years_to_expiry=years_to_expiry,
+        volatility=base["implied_volatility"],
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+    )
+    return {
+        "expiry": expiry,
+        "option_type": option_type,
+        **base,
+        **metrics,
+    }
+
+
+def _model_data_quality() -> dict[str, Any]:
+    return {
+        "quote_may_be_delayed": True,
+        "execution_grade": False,
+        "notice": QUOTE_DELAY_NOTICE,
+        "model_is_theoretical": True,
+        "not_dealer_positioning": True,
+    }
+
+
 class OptionsService:
     def __init__(self, provider: YFinanceProvider | None = None) -> None:
         self._provider = provider or YFinanceProvider()
@@ -535,6 +769,443 @@ class OptionsService:
             "candidates_considered": len(candidates),
             "results": results,
         }
+
+
+    def option_greeks(
+        self,
+        symbol: str,
+        expiry: str,
+        *,
+        risk_free_rate: float,
+        dividend_yield: float = 0.0,
+        spot_override: float | None = None,
+        option_type: OptionType = "both",
+        min_strike: float | None = None,
+        max_strike: float | None = None,
+        min_open_interest: int | None = None,
+        limit_per_side: int | None = None,
+    ) -> dict[str, Any]:
+        _validate_model_inputs(
+            risk_free_rate,
+            dividend_yield,
+            spot_override=spot_override,
+        )
+        if option_type not in {"calls", "puts", "both"}:
+            raise ValueError("option_type must be calls, puts, or both")
+
+        snapshot = self._provider.option_chain(symbol, expiry)
+        calls = _filter_rows(
+            snapshot.calls,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=limit_per_side,
+        )
+        puts = _filter_rows(
+            snapshot.puts,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=limit_per_side,
+        )
+        spot, spot_source = _valuation_spot(snapshot.underlying, spot_override)
+        years = _years_to_expiry(snapshot.expiry, snapshot.retrieved_at)
+
+        result = self._metadata(snapshot)
+        result["data_quality"].update(_model_data_quality())
+        result["model_assumptions"] = _model_assumptions(
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            spot=spot,
+            spot_source=spot_source,
+        )
+        result["years_to_expiry"] = years
+        result["filters"] = {
+            "option_type": option_type,
+            "min_strike": min_strike,
+            "max_strike": max_strike,
+            "min_open_interest": min_open_interest,
+            "limit_per_side": limit_per_side,
+        }
+        result["underlying"] = _underlying_summary(snapshot.underlying)
+        if option_type in {"calls", "both"}:
+            result["calls"] = [
+                _greek_contract_view(
+                    row,
+                    option_type="call",
+                    expiry=snapshot.expiry,
+                    spot=spot,
+                    years_to_expiry=years,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
+                )
+                for row in calls
+            ]
+        if option_type in {"puts", "both"}:
+            result["puts"] = [
+                _greek_contract_view(
+                    row,
+                    option_type="put",
+                    expiry=snapshot.expiry,
+                    spot=spot,
+                    years_to_expiry=years,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
+                )
+                for row in puts
+            ]
+        return result
+
+    def option_risk_map(
+        self,
+        symbol: str,
+        expiry: str,
+        *,
+        risk_free_rate: float,
+        dividend_yield: float = 0.0,
+        spot_override: float | None = None,
+        min_strike: float | None = None,
+        max_strike: float | None = None,
+        min_open_interest: int = 1,
+        contract_multiplier: int = 100,
+        top_n: int = 10,
+    ) -> dict[str, Any]:
+        _validate_model_inputs(
+            risk_free_rate,
+            dividend_yield,
+            spot_override=spot_override,
+        )
+        if min_open_interest < 0:
+            raise ValueError("min_open_interest must be non-negative")
+        if contract_multiplier <= 0:
+            raise ValueError("contract_multiplier must be positive")
+        if top_n <= 0 or top_n > 50:
+            raise ValueError("top_n must be between 1 and 50")
+
+        snapshot = self._provider.option_chain(symbol, expiry)
+        calls = _filter_rows(
+            snapshot.calls,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=None,
+        )
+        puts = _filter_rows(
+            snapshot.puts,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=None,
+        )
+        spot, spot_source = _valuation_spot(snapshot.underlying, spot_override)
+        years = _years_to_expiry(snapshot.expiry, snapshot.retrieved_at)
+
+        buckets: dict[float, dict[str, float]] = {}
+        modeled_contracts = 0
+        for side, rows in (("call", calls), ("put", puts)):
+            for row in rows:
+                strike = _number(row.get("strike"))
+                open_interest = _number(row.get("openInterest"))
+                volatility = _number(row.get("impliedVolatility"))
+                if strike is None or open_interest is None or open_interest < 0:
+                    continue
+                metrics = _bsm_metrics(
+                    side,
+                    spot=spot,
+                    strike=strike,
+                    years_to_expiry=years,
+                    volatility=volatility,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
+                )
+                gamma = _number(metrics.get("gamma"))
+                if gamma is None:
+                    continue
+                modeled_contracts += 1
+                gamma_shares_per_dollar = (
+                    gamma * open_interest * float(contract_multiplier)
+                )
+                gamma_notional_1pct = (
+                    gamma_shares_per_dollar * (0.01 * spot) * spot
+                )
+                bucket = buckets.setdefault(
+                    strike,
+                    {
+                        "call_open_interest": 0.0,
+                        "put_open_interest": 0.0,
+                        "call_gamma_notional_per_1pct_move": 0.0,
+                        "put_gamma_notional_per_1pct_move": 0.0,
+                    },
+                )
+                bucket[f"{side}_open_interest"] += open_interest
+                bucket[f"{side}_gamma_notional_per_1pct_move"] += gamma_notional_1pct
+
+        risk_rows: list[dict[str, Any]] = []
+        total_unsigned_gamma = 0.0
+        for strike, bucket in buckets.items():
+            total = (
+                bucket["call_gamma_notional_per_1pct_move"]
+                + bucket["put_gamma_notional_per_1pct_move"]
+            )
+            total_unsigned_gamma += total
+            risk_rows.append(
+                {
+                    "strike": strike,
+                    **bucket,
+                    "total_open_interest": (
+                        bucket["call_open_interest"] + bucket["put_open_interest"]
+                    ),
+                    "unsigned_gamma_notional_per_1pct_move": total,
+                }
+            )
+
+        for row in risk_rows:
+            row["gamma_concentration_share"] = (
+                row["unsigned_gamma_notional_per_1pct_move"] / total_unsigned_gamma
+                if total_unsigned_gamma > 0
+                else None
+            )
+        risk_rows.sort(
+            key=lambda row: row["unsigned_gamma_notional_per_1pct_move"],
+            reverse=True,
+        )
+
+        atm = _atm_summary(calls, puts, spot)
+        atm_ivs = [
+            value
+            for value in (
+                _number(atm.get("call_implied_volatility")),
+                _number(atm.get("put_implied_volatility")),
+            )
+            if value is not None and value > 0
+        ]
+        atm_iv = statistics.mean(atm_ivs) if atm_ivs else None
+        implied_move_pct = (
+            atm_iv * math.sqrt(years) * 100.0
+            if atm_iv is not None and years > 0
+            else None
+        )
+
+        result = self._metadata(snapshot)
+        result["data_quality"].update(_model_data_quality())
+        result["data_quality"]["risk_map_notice"] = (
+            "Gamma is weighted by total open interest as an unsigned concentration measure. "
+            "Open interest does not identify who is long or short, so this is not dealer gamma "
+            "and no directional dealer exposure is inferred."
+        )
+        result["model_assumptions"] = _model_assumptions(
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            spot=spot,
+            spot_source=spot_source,
+            contract_multiplier=contract_multiplier,
+        )
+        result["underlying"] = _underlying_summary(snapshot.underlying)
+        result["years_to_expiry"] = years
+        result["atm"] = {
+            **atm,
+            "mean_atm_implied_volatility": atm_iv,
+            "one_standard_deviation_implied_move_pct": implied_move_pct,
+            "one_standard_deviation_implied_move_abs": (
+                spot * implied_move_pct / 100.0
+                if implied_move_pct is not None
+                else None
+            ),
+        }
+        result["filters"] = {
+            "min_strike": min_strike,
+            "max_strike": max_strike,
+            "min_open_interest": min_open_interest,
+            "top_n": top_n,
+        }
+        result["modeled_contracts"] = modeled_contracts
+        result["total_unsigned_gamma_notional_per_1pct_move"] = total_unsigned_gamma
+        result["top_gamma_concentrations"] = risk_rows[:top_n]
+        return result
+
+    def option_scenario(
+        self,
+        symbol: str,
+        expiry: str,
+        *,
+        risk_free_rate: float,
+        spot_change_pct: float,
+        iv_change_points: float = 0.0,
+        days_forward: int = 0,
+        dividend_yield: float = 0.0,
+        spot_override: float | None = None,
+        option_type: OptionType = "both",
+        min_strike: float | None = None,
+        max_strike: float | None = None,
+        min_open_interest: int = 0,
+        contract_multiplier: int = 100,
+        sort_by: ScenarioSort = "open_interest",
+        top_n: int = 20,
+    ) -> dict[str, Any]:
+        _validate_model_inputs(
+            risk_free_rate,
+            dividend_yield,
+            spot_override=spot_override,
+        )
+        if not math.isfinite(spot_change_pct) or spot_change_pct <= -100.0:
+            raise ValueError("spot_change_pct must be finite and greater than -100")
+        if not math.isfinite(iv_change_points):
+            raise ValueError("iv_change_points must be finite")
+        if days_forward < 0:
+            raise ValueError("days_forward must be non-negative")
+        if min_open_interest < 0:
+            raise ValueError("min_open_interest must be non-negative")
+        if contract_multiplier <= 0:
+            raise ValueError("contract_multiplier must be positive")
+        if option_type not in {"calls", "puts", "both"}:
+            raise ValueError("option_type must be calls, puts, or both")
+        if sort_by not in {"open_interest", "absolute_model_change", "gamma_notional"}:
+            raise ValueError(
+                "sort_by must be open_interest, absolute_model_change, or gamma_notional"
+            )
+        if top_n <= 0 or top_n > 100:
+            raise ValueError("top_n must be between 1 and 100")
+
+        snapshot = self._provider.option_chain(symbol, expiry)
+        calls = _filter_rows(
+            snapshot.calls,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=None,
+        )
+        puts = _filter_rows(
+            snapshot.puts,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            min_volume=None,
+            min_open_interest=min_open_interest,
+            limit_per_side=None,
+        )
+        spot, spot_source = _valuation_spot(snapshot.underlying, spot_override)
+        scenario_spot = spot * (1.0 + spot_change_pct / 100.0)
+        base_years = _years_to_expiry(snapshot.expiry, snapshot.retrieved_at)
+        scenario_years = _years_to_expiry(
+            snapshot.expiry,
+            snapshot.retrieved_at,
+            days_forward=float(days_forward),
+        )
+
+        rows: list[dict[str, Any]] = []
+        for side, source_rows in (("call", calls), ("put", puts)):
+            if option_type not in {f"{side}s", "both"}:
+                continue
+            for row in source_rows:
+                base_view = _contract_view(row)
+                iv = base_view["implied_volatility"]
+                scenario_iv = (
+                    iv + iv_change_points / 100.0 if iv is not None else None
+                )
+                base_metrics = _bsm_metrics(
+                    side,
+                    spot=spot,
+                    strike=base_view["strike"],
+                    years_to_expiry=base_years,
+                    volatility=iv,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
+                )
+                scenario_metrics = _bsm_metrics(
+                    side,
+                    spot=scenario_spot,
+                    strike=base_view["strike"],
+                    years_to_expiry=scenario_years,
+                    volatility=scenario_iv,
+                    risk_free_rate=risk_free_rate,
+                    dividend_yield=dividend_yield,
+                )
+                base_price = _number(base_metrics.get("model_price"))
+                scenario_price = _number(scenario_metrics.get("model_price"))
+                model_change = (
+                    scenario_price - base_price
+                    if scenario_price is not None and base_price is not None
+                    else None
+                )
+                oi = base_view["open_interest"]
+                gamma = _number(base_metrics.get("gamma"))
+                gamma_notional = (
+                    gamma * oi * contract_multiplier * (0.01 * spot) * spot
+                    if gamma is not None and oi is not None and oi >= 0
+                    else None
+                )
+                rows.append(
+                    {
+                        "expiry": snapshot.expiry,
+                        "option_type": side,
+                        **base_view,
+                        "base_model": base_metrics,
+                        "scenario_implied_volatility": scenario_iv,
+                        "scenario_model": scenario_metrics,
+                        "model_price_change": model_change,
+                        "model_price_change_pct": (
+                            model_change / base_price * 100.0
+                            if model_change is not None
+                            and base_price is not None
+                            and base_price > 0
+                            else None
+                        ),
+                        "model_value_change_per_contract": (
+                            model_change * contract_multiplier
+                            if model_change is not None
+                            else None
+                        ),
+                        "unsigned_gamma_notional_per_1pct_move": gamma_notional,
+                    }
+                )
+
+        def scenario_sort_key(row: dict[str, Any]) -> tuple[bool, float, float]:
+            if sort_by == "absolute_model_change":
+                value = _number(row.get("model_price_change"))
+                primary = abs(value) if value is not None else None
+            elif sort_by == "gamma_notional":
+                primary = _number(row.get("unsigned_gamma_notional_per_1pct_move"))
+            else:
+                primary = _number(row.get("open_interest"))
+            oi = _number(row.get("open_interest"))
+            return (primary is not None, primary or 0.0, oi or 0.0)
+
+        rows.sort(key=scenario_sort_key, reverse=True)
+
+        result = self._metadata(snapshot)
+        result["data_quality"].update(_model_data_quality())
+        result["model_assumptions"] = _model_assumptions(
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            spot=spot,
+            spot_source=spot_source,
+            contract_multiplier=contract_multiplier,
+        )
+        result["underlying"] = _underlying_summary(snapshot.underlying)
+        result["scenario"] = {
+            "spot_change_pct": spot_change_pct,
+            "base_spot": spot,
+            "scenario_spot": scenario_spot,
+            "iv_change_points": iv_change_points,
+            "days_forward": days_forward,
+            "base_years_to_expiry": base_years,
+            "scenario_years_to_expiry": scenario_years,
+        }
+        result["filters"] = {
+            "option_type": option_type,
+            "min_strike": min_strike,
+            "max_strike": max_strike,
+            "min_open_interest": min_open_interest,
+            "sort_by": sort_by,
+            "top_n": top_n,
+        }
+        result["contracts_considered"] = len(rows)
+        result["results"] = rows[:top_n]
+        return result
 
     @staticmethod
     def _metadata(snapshot: ChainSnapshot) -> dict[str, Any]:
