@@ -11,34 +11,25 @@ $python = Join-Path $venvRoot "Scripts\python.exe"
 $pythonw = Join-Path $venvRoot "Scripts\pythonw.exe"
 $launcher = Join-Path $PSScriptRoot "run-http-hidden.py"
 
-if (-not (Test-Path $python)) {
-    $uv = Get-Command uv -ErrorAction SilentlyContinue
-    if ($uv) {
-        & $uv.Source venv --python 3.12 $venvRoot
-    } else {
-        $py = Get-Command py -ErrorAction SilentlyContinue
-        if (-not $py) {
-            throw "Python 3.12+ or uv is required."
-        }
-        & $py.Source -3.12 -m venv $venvRoot
+$uv = Get-Command uv -ErrorAction SilentlyContinue
+if (-not $uv) {
+    throw "uv is required for a locked installation. Install uv and rerun this script."
+}
+
+Push-Location $repoRoot
+try {
+    & $uv.Source sync --locked --python 3.12
+    if ($LASTEXITCODE -ne 0) {
+        throw "Locked dependency installation failed."
     }
 }
+finally {
+    Pop-Location
+}
 
 if (-not (Test-Path $python)) {
-    throw "Virtual environment creation failed."
+    throw "Locked virtual environment creation failed."
 }
-
-$uv = Get-Command uv -ErrorAction SilentlyContinue
-if ($uv) {
-    & $uv.Source pip install --python $python -e $repoRoot
-} else {
-    & $python -m pip install -e $repoRoot
-}
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Package installation failed."
-}
-
 $userId = "$env:USERDOMAIN\$env:USERNAME"
 $argument = '"{0}" --port {1}' -f $launcher, $Port
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument $argument -WorkingDirectory $repoRoot

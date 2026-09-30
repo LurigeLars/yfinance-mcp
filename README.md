@@ -34,7 +34,7 @@ Returns calls, puts, or both for one expiration, including the fields exposed by
 - contract size
 - currency
 
-Optional filters can narrow strike, volume, and open-interest ranges. There is no default row limit. An optional `limit_per_side` is available when a caller explicitly wants a bounded response.
+Optional filters can narrow strike, volume, and open-interest ranges. There is no default row limit. An optional `limit_per_side` is available when a caller explicitly wants a bounded response. Underlying quote metadata is normalized to a small allowlisted schema rather than forwarding Yahoo's full auxiliary payload.
 
 ### `option_positioning_summary`
 
@@ -53,11 +53,10 @@ The summary keeps absolute volume and OI beside volume/OI ratios so a high ratio
 
 ## Install
 
-Python 3.12 or newer is recommended.
+Python 3.12 or newer is recommended. The repository commits `uv.lock` for reproducible deployments.
 
 ```bash
-python -m venv .venv
-python -m pip install -e .
+uv sync --locked
 ```
 
 Run the MCP server over stdio:
@@ -125,10 +124,12 @@ The installer can also read the team domain and allowed identity values from an 
 ## Development
 
 ```bash
-python -m pip install -e ".[dev]"
-ruff check .
-pytest
+uv sync --locked --extra dev
+uv run --no-sync ruff check .
+uv run --no-sync pytest
 ```
+
+Dependabot checks Python and GitHub Actions dependencies weekly. A separate scheduled upstream watch compares the locked `yfinance` and FastMCP versions with their latest GitHub releases; Dependabot remains the normal update path when a package release is available.
 
 ## License
 

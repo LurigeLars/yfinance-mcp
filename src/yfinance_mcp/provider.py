@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,8 @@ QUOTE_DELAY_NOTICE = (
 
 _EXPIRATIONS_TTL_SECONDS = 15 * 60
 _CHAIN_TTL_SECONDS = 60
+_EXPIRATIONS_CACHE_MAX_ENTRIES = 256
+_CHAIN_CACHE_MAX_ENTRIES = 512
 
 
 class UpstreamDataError(RuntimeError):
@@ -35,10 +38,24 @@ class ChainSnapshot:
 
 
 class _TTLCache:
-    def __init__(self, ttl_seconds: int) -> None:
+    def __init__(self, ttl_seconds: int, max_entries: int) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        if max_entries <= 0:
+            raise ValueError("max_entries must be positive")
         self._ttl_seconds = ttl_seconds
-        self._values: dict[Any, tuple[float, Any]] = {}
+        self._max_entries = max_entries
+        self._values: OrderedDict[Any, tuple[float, Any]] = OrderedDict()
         self._lock = threading.Lock()
+
+    def _prune_expired(self, now: float) -> None:
+        expired = [
+            key
+            for key, (stored_at, _) in self._values.items()
+            if now - stored_at >= self._ttl_seconds
+        ]
+        for key in expired:
+            self._values.pop(key, None)
 
     def get(self, key: Any) -> Any | None:
         now = time.monotonic()
@@ -50,11 +67,17 @@ class _TTLCache:
             if now - stored_at >= self._ttl_seconds:
                 self._values.pop(key, None)
                 return None
+            self._values.move_to_end(key)
             return deepcopy(value)
 
     def set(self, key: Any, value: Any) -> None:
+        now = time.monotonic()
         with self._lock:
-            self._values[key] = (time.monotonic(), deepcopy(value))
+            self._prune_expired(now)
+            self._values[key] = (now, deepcopy(value))
+            self._values.move_to_end(key)
+            while len(self._values) > self._max_entries:
+                self._values.popitem(last=False)
 
 
 def _utc_now() -> str:
@@ -127,8 +150,14 @@ class YFinanceProvider:
     """Small provider boundary around the yfinance options surface."""
 
     def __init__(self) -> None:
-        self._expirations_cache = _TTLCache(_EXPIRATIONS_TTL_SECONDS)
-        self._chain_cache = _TTLCache(_CHAIN_TTL_SECONDS)
+        self._expirations_cache = _TTLCache(
+            _EXPIRATIONS_TTL_SECONDS,
+            _EXPIRATIONS_CACHE_MAX_ENTRIES,
+        )
+        self._chain_cache = _TTLCache(
+            _CHAIN_TTL_SECONDS,
+            _CHAIN_CACHE_MAX_ENTRIES,
+        )
 
     def option_expirations(self, symbol: str) -> tuple[str, ...]:
         normalized_symbol = _normalize_symbol(symbol)

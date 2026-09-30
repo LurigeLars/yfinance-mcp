@@ -26,6 +26,7 @@ def make_snapshot() -> ChainSnapshot:
             "exchange": "NMS",
             "quoteType": "EQUITY",
             "marketState": "REGULAR",
+            "unexpectedUpstreamField": "must-not-leak",
         },
         calls=[
             {
@@ -101,6 +102,17 @@ def test_chain_filters_without_hidden_default_limit() -> None:
     assert result["calls"][0]["contractSymbol"] == "TESTC110"
     assert result["puts"][0]["contractSymbol"] == "TESTP110"
     assert result["filters"]["limit_per_side"] is None
+    assert result["underlying"] == {
+        "symbol": "TEST",
+        "quote_type": "EQUITY",
+        "exchange": "NMS",
+        "currency": "USD",
+        "market_state": "REGULAR",
+        "regular_market_price": 105.0,
+        "regular_market_time": 1790779200,
+        "regular_market_time_utc": "2026-09-30T14:40:00+00:00",
+    }
+    assert "unexpectedUpstreamField" not in result["underlying"]
 
 
 def test_positioning_summary_keeps_absolute_values_with_ratios() -> None:
