@@ -20,12 +20,17 @@ def _number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _sum_field(rows: list[dict[str, Any]], field: str) -> float:
-    return sum(value for row in rows if (value := _number(row.get(field))) is not None)
+def _sum_field(rows: list[dict[str, Any]], field: str) -> float | None:
+    values = [
+        value for row in rows if (value := _number(row.get(field))) is not None
+    ]
+    return sum(values) if values else None
 
 
-def _ratio(numerator: float, denominator: float) -> float | None:
-    return numerator / denominator if denominator > 0 else None
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
 
 
 def _contract_view(row: dict[str, Any]) -> dict[str, Any]:
