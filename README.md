@@ -106,13 +106,14 @@ The same tool surface can also run over Streamable HTTP. It binds to loopback by
 yfinance-mcp-http
 ```
 
-Default endpoint:
-
-```text
-http://127.0.0.1:8772/mcp
-```
-
+Standalone `yfinance-mcp-http` retains its package default endpoint at `http://127.0.0.1:8772/mcp`.
 The optional environment variables `YFINANCE_MCP_HOST` and `YFINANCE_MCP_PORT` change the bind address and port. A non-loopback host is rejected unless `YFINANCE_MCP_ALLOW_NON_LOOPBACK=1` is also set explicitly.
+
+On this local MCP stack, the Windows installer does **not** independently trust that default. When
+Docker-MCP's host port registry is installed it reserves a stable port for `yfinance-mcp-http`
+(preferred first allocation: 8772), adopts an already-running matching legacy listener during
+migration, and writes that exact reserved port into the Scheduled Task. Normal restarts reuse the
+same reservation and never silently hop to another port.
 
 On Windows, the included installer creates a per-user, limited-privilege Scheduled Task and keeps the HTTP server on loopback:
 
