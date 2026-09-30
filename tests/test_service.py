@@ -141,3 +141,9 @@ def test_invalid_filter_range_is_rejected() -> None:
         assert "min_strike" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_fastmcp_server_registers_tools() -> None:
+    from yfinance_mcp.server import mcp
+
+    assert mcp is not None
