@@ -1,0 +1,38 @@
+[project]
+name = "yfinance-mcp"
+version = "0.1.0"
+description = "Read-only MCP server for Yahoo Finance options data via yfinance"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "fastmcp==4.0.10",
+    "pandas>=2.2,<4",
+    "yfinance>=1.7,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.15,<1",
+]
+
+[project.scripts]
+yfinance-mcp = "yfinance_mcp:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yfinance_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
