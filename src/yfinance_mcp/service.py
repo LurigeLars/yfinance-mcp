@@ -258,7 +258,7 @@ class OptionsService:
             "min_open_interest": min_open_interest,
             "limit_per_side": limit_per_side,
         }
-        result["underlying"] = snapshot.underlying
+        result["underlying"] = _underlying_summary(snapshot.underlying)
         result["counts"] = {
             "calls": len(calls) if option_type in {"calls", "both"} else 0,
             "puts": len(puts) if option_type in {"puts", "both"} else 0,
