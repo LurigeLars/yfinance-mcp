@@ -1,6 +1,6 @@
 [project]
 name = "yfinance-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Read-only MCP server for Yahoo Finance options data via yfinance"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,6 +19,7 @@ dev = [
 
 [project.scripts]
 yfinance-mcp = "yfinance_mcp:main"
+yfinance-mcp-http = "yfinance_mcp.http:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
