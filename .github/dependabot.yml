@@ -1,6 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
@@ -9,6 +9,23 @@ updates:
       timezone: Europe/Stockholm
     groups:
       python-dependencies:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:30"
+      timezone: Europe/Stockholm
+    groups:
+      container-images:
         patterns:
           - "*"
     open-pull-requests-limit: 2
