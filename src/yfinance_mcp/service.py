@@ -8,6 +8,7 @@ from typing import Any, Literal
 from .provider import QUOTE_DELAY_NOTICE, SOURCE, ChainSnapshot, YFinanceProvider
 
 OptionType = Literal["calls", "puts", "both"]
+ActivitySort = Literal["volume_open_interest_ratio", "volume", "open_interest"]
 
 
 def _number(value: Any) -> float | None:
@@ -184,9 +185,356 @@ def _underlying_summary(underlying: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _compact_side_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total_volume = _sum_field(rows, "volume")
+    total_open_interest = _sum_field(rows, "openInterest")
+    return {
+        "contracts": len(rows),
+        "total_volume": total_volume,
+        "total_open_interest": total_open_interest,
+        "volume_open_interest_ratio": _ratio(total_volume, total_open_interest),
+        "median_implied_volatility": _iv_stats(rows)["median"],
+    }
+
+
+def _days_to_expiry(expiry: str, retrieved_at: str) -> int | None:
+    try:
+        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+        retrieved_date = datetime.fromisoformat(
+            retrieved_at.replace("Z", "+00:00")
+        ).date()
+    except ValueError:
+        return None
+    return (expiry_date - retrieved_date).days
+
+
+def _top_open_interest_strikes(
+    calls: list[dict[str, Any]],
+    puts: list[dict[str, Any]],
+    top_n: int,
+) -> list[dict[str, Any]]:
+    buckets: dict[float, dict[str, float | None]] = {}
+    for side, rows in (("call", calls), ("put", puts)):
+        key = f"{side}_open_interest"
+        for row in rows:
+            strike = _number(row.get("strike"))
+            open_interest = _number(row.get("openInterest"))
+            if strike is None or open_interest is None:
+                continue
+            bucket = buckets.setdefault(
+                strike,
+                {
+                    "call_open_interest": None,
+                    "put_open_interest": None,
+                },
+            )
+            previous = bucket[key]
+            bucket[key] = open_interest + (previous or 0.0)
+
+    ranked: list[dict[str, Any]] = []
+    for strike, bucket in buckets.items():
+        values = [
+            value
+            for value in (
+                bucket["call_open_interest"],
+                bucket["put_open_interest"],
+            )
+            if value is not None
+        ]
+        ranked.append(
+            {
+                "strike": strike,
+                **bucket,
+                "total_open_interest": sum(values) if values else None,
+            }
+        )
+
+    ranked.sort(
+        key=lambda row: (
+            row["total_open_interest"] is not None,
+            row["total_open_interest"] or 0.0,
+            -row["strike"],
+        ),
+        reverse=True,
+    )
+    return ranked[:top_n]
+
+
+def _atm_summary(
+    calls: list[dict[str, Any]],
+    puts: list[dict[str, Any]],
+    underlying_price: float | None,
+) -> dict[str, Any]:
+    strikes = sorted(
+        {
+            strike
+            for row in calls + puts
+            if (strike := _number(row.get("strike"))) is not None
+        }
+    )
+    if underlying_price is None or underlying_price <= 0 or not strikes:
+        return {
+            "strike": None,
+            "call_implied_volatility": None,
+            "put_implied_volatility": None,
+        }
+
+    strike = min(strikes, key=lambda value: (abs(value - underlying_price), value))
+
+    def iv_for(rows: list[dict[str, Any]]) -> float | None:
+        for row in rows:
+            if _number(row.get("strike")) == strike:
+                return _number(row.get("impliedVolatility"))
+        return None
+
+    return {
+        "strike": strike,
+        "call_implied_volatility": iv_for(calls),
+        "put_implied_volatility": iv_for(puts),
+    }
+
+
+def _activity_view(
+    row: dict[str, Any],
+    *,
+    expiry: str,
+    option_type: Literal["call", "put"],
+    underlying_price: float | None,
+) -> dict[str, Any]:
+    view = _contract_view(row)
+    strike = view["strike"]
+    moneyness_pct = None
+    if (
+        strike is not None
+        and underlying_price is not None
+        and underlying_price > 0
+    ):
+        moneyness_pct = ((strike / underlying_price) - 1.0) * 100.0
+
+    return {
+        "expiry": expiry,
+        "option_type": option_type,
+        **view,
+        "moneyness_pct_from_spot": moneyness_pct,
+        "in_the_money": row.get("inTheMoney"),
+    }
+
+
 class OptionsService:
     def __init__(self, provider: YFinanceProvider | None = None) -> None:
         self._provider = provider or YFinanceProvider()
+
+    def _expiration_window(
+        self,
+        symbol: str,
+        *,
+        start_index: int,
+        max_expiries: int,
+    ) -> tuple[list[str], list[str]]:
+        if start_index < 0:
+            raise ValueError("start_index must be non-negative")
+        if max_expiries <= 0 or max_expiries > 12:
+            raise ValueError("max_expiries must be between 1 and 12")
+
+        available = list(self._provider.option_expirations(symbol))
+        if available and start_index >= len(available):
+            raise ValueError("start_index is beyond available expirations")
+        return available, available[start_index : start_index + max_expiries]
+
+    def option_surface_summary(
+        self,
+        symbol: str,
+        *,
+        start_index: int = 0,
+        max_expiries: int = 8,
+        top_n: int = 3,
+    ) -> dict[str, Any]:
+        if top_n <= 0 or top_n > 10:
+            raise ValueError("top_n must be between 1 and 10")
+
+        available, selected = self._expiration_window(
+            symbol,
+            start_index=start_index,
+            max_expiries=max_expiries,
+        )
+        rows: list[dict[str, Any]] = []
+        first_underlying: dict[str, Any] | None = None
+        latest_retrieved_at: str | None = None
+
+        for expiry in selected:
+            snapshot = self._provider.option_chain(symbol, expiry)
+            underlying = _underlying_summary(snapshot.underlying)
+            if first_underlying is None:
+                first_underlying = underlying
+            latest_retrieved_at = snapshot.retrieved_at
+
+            calls = snapshot.calls
+            puts = snapshot.puts
+            call_summary = _compact_side_summary(calls)
+            put_summary = _compact_side_summary(puts)
+            spot = underlying["regular_market_price"]
+
+            rows.append(
+                {
+                    "expiry": snapshot.expiry,
+                    "days_to_expiry": _days_to_expiry(
+                        snapshot.expiry,
+                        snapshot.retrieved_at,
+                    ),
+                    "retrieved_at": snapshot.retrieved_at,
+                    "calls": call_summary,
+                    "puts": put_summary,
+                    "put_call": {
+                        "volume_ratio": _ratio(
+                            put_summary["total_volume"],
+                            call_summary["total_volume"],
+                        ),
+                        "open_interest_ratio": _ratio(
+                            put_summary["total_open_interest"],
+                            call_summary["total_open_interest"],
+                        ),
+                        "ratio_convention": "puts divided by calls",
+                    },
+                    "atm": _atm_summary(calls, puts, spot),
+                    "top_open_interest_strikes": _top_open_interest_strikes(
+                        calls,
+                        puts,
+                        top_n,
+                    ),
+                }
+            )
+
+        return {
+            "source": SOURCE,
+            "retrieved_at": latest_retrieved_at,
+            "symbol": symbol.strip().upper(),
+            "data_quality": {
+                "quote_may_be_delayed": True,
+                "execution_grade": False,
+                "notice": QUOTE_DELAY_NOTICE,
+            },
+            "selection": {
+                "start_index": start_index,
+                "max_expiries": max_expiries,
+                "available_expiration_count": len(available),
+                "selected_count": len(selected),
+                "has_more": start_index + len(selected) < len(available),
+            },
+            "underlying": first_underlying,
+            "expiries": rows,
+        }
+
+    def option_activity_summary(
+        self,
+        symbol: str,
+        *,
+        start_index: int = 0,
+        max_expiries: int = 8,
+        min_volume: int = 100,
+        min_open_interest: int = 10,
+        sort_by: ActivitySort = "volume_open_interest_ratio",
+        top_n: int = 20,
+    ) -> dict[str, Any]:
+        if min_volume < 0:
+            raise ValueError("min_volume must be non-negative")
+        if min_open_interest < 0:
+            raise ValueError("min_open_interest must be non-negative")
+        if sort_by not in {
+            "volume_open_interest_ratio",
+            "volume",
+            "open_interest",
+        }:
+            raise ValueError(
+                "sort_by must be volume_open_interest_ratio, volume, or open_interest"
+            )
+        if top_n <= 0 or top_n > 100:
+            raise ValueError("top_n must be between 1 and 100")
+
+        available, selected = self._expiration_window(
+            symbol,
+            start_index=start_index,
+            max_expiries=max_expiries,
+        )
+        candidates: list[dict[str, Any]] = []
+        first_underlying: dict[str, Any] | None = None
+        latest_retrieved_at: str | None = None
+
+        for expiry in selected:
+            snapshot = self._provider.option_chain(symbol, expiry)
+            underlying = _underlying_summary(snapshot.underlying)
+            if first_underlying is None:
+                first_underlying = underlying
+            latest_retrieved_at = snapshot.retrieved_at
+            spot = underlying["regular_market_price"]
+
+            for option_type, source_rows in (
+                ("call", snapshot.calls),
+                ("put", snapshot.puts),
+            ):
+                filtered = _filter_rows(
+                    source_rows,
+                    min_strike=None,
+                    max_strike=None,
+                    min_volume=min_volume,
+                    min_open_interest=min_open_interest,
+                    limit_per_side=None,
+                )
+                candidates.extend(
+                    _activity_view(
+                        row,
+                        expiry=snapshot.expiry,
+                        option_type=option_type,
+                        underlying_price=spot,
+                    )
+                    for row in filtered
+                )
+
+        def sort_key(row: dict[str, Any]) -> tuple[bool, float, float, float]:
+            primary = _number(row.get(sort_by))
+            volume = _number(row.get("volume"))
+            open_interest = _number(row.get("open_interest"))
+            return (
+                primary is not None,
+                primary or 0.0,
+                volume or 0.0,
+                open_interest or 0.0,
+            )
+
+        candidates.sort(key=sort_key, reverse=True)
+        results = candidates[:top_n]
+
+        return {
+            "source": SOURCE,
+            "retrieved_at": latest_retrieved_at,
+            "symbol": symbol.strip().upper(),
+            "data_quality": {
+                "quote_may_be_delayed": True,
+                "execution_grade": False,
+                "notice": QUOTE_DELAY_NOTICE,
+                "activity_is_not_order_flow": True,
+                "activity_notice": (
+                    "Volume/open-interest activity does not reveal trade direction, "
+                    "sweeps, or opening/closing intent."
+                ),
+            },
+            "selection": {
+                "start_index": start_index,
+                "max_expiries": max_expiries,
+                "available_expiration_count": len(available),
+                "selected_count": len(selected),
+                "has_more": start_index + len(selected) < len(available),
+            },
+            "filters": {
+                "min_volume": min_volume,
+                "min_open_interest": min_open_interest,
+                "sort_by": sort_by,
+                "top_n": top_n,
+            },
+            "underlying": first_underlying,
+            "candidates_considered": len(candidates),
+            "results": results,
+        }
 
     @staticmethod
     def _metadata(snapshot: ChainSnapshot) -> dict[str, Any]:
