@@ -37,11 +37,14 @@ def main() -> int:
     log_file, old_log_file = _log_paths()
     _rotate_log(log_file, old_log_file)
 
-    with log_file.open("a", encoding="utf-8") as log:
-        with redirect_stdout(log), redirect_stderr(log):
-            from yfinance_mcp.http import main as run_http
+    with (
+        log_file.open("a", encoding="utf-8") as log,
+        redirect_stdout(log),
+        redirect_stderr(log),
+    ):
+        from yfinance_mcp.http import main as run_http
 
-            run_http()
+        run_http()
     return 0
 
 
