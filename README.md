@@ -2,7 +2,7 @@
 
 A small, read-only MCP server for options-market data provided by the upstream `yfinance` package.
 
-The server is intentionally narrow: it exposes option expirations, raw option chains, and a compact positioning summary. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
+The server is intentionally narrow: it exposes option expirations, raw option chains, single-expiry positioning, bounded multi-expiry surface summaries, and bounded activity ranking. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
 
 ## Data source and limitations
 
@@ -50,6 +50,25 @@ Produces a compact per-expiration summary with:
 - underlying quote metadata returned with the option chain
 
 The summary keeps absolute volume and OI beside volume/OI ratios so a high ratio cannot hide a tiny denominator.
+
+### `option_surface_summary`
+
+Summarizes a bounded consecutive expiration window (default 8, maximum 12) with:
+
+- days to expiry
+- call/put volume and open interest totals
+- put/call volume and OI ratios
+- median IV by side
+- nearest-to-spot strike with call/put IV
+- highest combined-OI strikes
+
+`start_index` pages through the expiration list and `max_expiries` is always returned in the selection metadata, so the bound is explicit.
+
+### `option_activity_summary`
+
+Ranks contracts across a bounded expiration window using explicit minimum volume/open-interest thresholds. It can sort by volume/OI ratio, absolute volume, or absolute open interest and returns contract-level bid/ask, IV, strike distance from spot, and last-trade timestamp.
+
+This is activity evidence, not order-flow direction: Yahoo data does not establish sweeps, aggressor side, or whether trades opened or closed positions.
 
 ## Install
 
@@ -110,7 +129,7 @@ A bounded live provider smoke test is available after installation:
 Authentication and Internet exposure remain deployment-specific. Do not expose the unauthenticated MCP HTTP endpoint directly to the Internet.
 ### Protected remote gateway
 
-A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the three read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
+A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the five read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
 
 Copy `public/gateway.env.example` to the ignored `public/gateway.env`, fill in the deployment-specific Access values, then run:
 

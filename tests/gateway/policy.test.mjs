@@ -10,14 +10,16 @@ import {
   rewriteResponse,
 } from '../../public/gateway/policy.mjs';
 
-test('default allowlist exposes exactly the three options tools', () => {
+test('default allowlist exposes exactly the five options tools', () => {
   const allowed = parseAllowedTools();
   assert.deepEqual([...allowed], [
     'option_expirations',
     'option_chain',
     'option_positioning_summary',
+    'option_surface_summary',
+    'option_activity_summary',
   ]);
-  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 3);
+  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 5);
 });
 
 test('explicit allowlist override is authoritative', () => {
