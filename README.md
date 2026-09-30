@@ -1,8 +1,8 @@
 # yfinance-mcp
 
-A small, read-only MCP server for options-market data provided by the upstream `yfinance` package.
+A small, read-only MCP server for options-market data and bounded theoretical options analytics provided by the upstream `yfinance` package.
 
-The server is intentionally narrow: it exposes option expirations, raw option chains, single-expiry positioning, bounded multi-expiry surface summaries, and bounded activity ranking. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
+The server is intentionally narrow: it exposes option expirations, raw option chains, positioning/activity summaries, and Black-Scholes-Merton greeks, unsigned gamma concentration, and scenario analysis. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
 
 ## Data source and limitations
 
@@ -70,6 +70,22 @@ Ranks contracts across a bounded expiration window using explicit minimum volume
 
 This is activity evidence, not order-flow direction: Yahoo data does not establish sweeps, aggressor side, or whether trades opened or closed positions.
 
+### `option_greeks`
+
+Calculates Black-Scholes-Merton theoretical price, delta, gamma, theta/day, vega per IV point, and rho per rate point for contracts in one expiry. The annualized risk-free rate is an explicit caller input. Continuous dividend yield defaults to zero. `spot_override` lets callers use a fresher underlying price from a realtime source instead of Yahoo's potentially delayed regular-market quote.
+
+### `option_risk_map`
+
+Weights model gamma by open interest and the contract multiplier to rank strike-level gamma concentration. The output is deliberately **unsigned**: open interest does not reveal who is long or short, so the tool does not label the result dealer gamma or infer dealer direction. It also returns a simple one-standard-deviation ATM implied move from the available contract IVs.
+
+### `option_scenario`
+
+Reprices a bounded single-expiry contract set under explicit changes to underlying spot, implied volatility (absolute vol points), and time forward. Results are theoretical model changes, not executable P&L forecasts. Contracts can be ranked by open interest, absolute model-price change, or unsigned gamma concentration.
+
+### Model limitations
+
+The analytics use Black-Scholes-Merton with ACT/365 and assume expiry at 16:00 America/New_York. US equity and ETF options are generally American-style, so the model is an approximation: early exercise, discrete dividends, borrow constraints, and market microstructure are not modeled. Use current underlying data via `spot_override` when available and venue/broker quotes for execution.
+
 ## Install
 
 Python 3.12 or newer is recommended. The repository commits `uv.lock` for reproducible deployments.
@@ -130,7 +146,7 @@ A bounded live provider smoke test is available after installation:
 Authentication and Internet exposure remain deployment-specific. Do not expose the unauthenticated MCP HTTP endpoint directly to the Internet.
 ### Protected remote gateway
 
-A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the five read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
+A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the eight read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
 
 Copy `public/gateway.env.example` to the ignored `public/gateway.env`, fill in the deployment-specific Access values, then run:
 
