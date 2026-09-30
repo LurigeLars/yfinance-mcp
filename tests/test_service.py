@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from yfinance_mcp.provider import ChainSnapshot
 from yfinance_mcp.service import OptionsService
 
@@ -10,7 +12,7 @@ class FakeProvider:
         return ("2026-10-02", "2026-10-09")
 
     def option_chain(self, symbol: str, expiry: str) -> ChainSnapshot:
-        return self.snapshot
+        return replace(self.snapshot, expiry=expiry)
 
 
 def make_snapshot() -> ChainSnapshot:
@@ -187,3 +189,103 @@ def test_missing_aggregate_fields_remain_unknown() -> None:
     assert result["calls"]["volume_open_interest_ratio"] is None
     assert result["put_call"]["volume_ratio"] is None
     assert result["put_call"]["open_interest_ratio"] is None
+
+
+def test_surface_summary_compacts_multiple_expiries() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_surface_summary(
+        "TEST",
+        max_expiries=2,
+        top_n=2,
+    )
+
+    assert result["selection"] == {
+        "start_index": 0,
+        "max_expiries": 2,
+        "available_expiration_count": 2,
+        "selected_count": 2,
+        "has_more": False,
+    }
+    assert [row["expiry"] for row in result["expiries"]] == [
+        "2026-10-02",
+        "2026-10-09",
+    ]
+    assert result["expiries"][0]["days_to_expiry"] == 2
+    assert result["expiries"][0]["atm"] == {
+        "strike": 100.0,
+        "call_implied_volatility": 0.40,
+        "put_implied_volatility": 0.50,
+    }
+    assert result["expiries"][0]["top_open_interest_strikes"][0] == {
+        "strike": 110.0,
+        "call_open_interest": 1000.0,
+        "put_open_interest": 0.0,
+        "total_open_interest": 1000.0,
+    }
+
+
+def test_surface_summary_rejects_unbounded_expiry_request() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    try:
+        service.option_surface_summary("TEST", max_expiries=13)
+    except ValueError as exc:
+        assert "max_expiries" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_activity_summary_ranks_with_absolute_thresholds() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_activity_summary(
+        "TEST",
+        max_expiries=2,
+        min_volume=100,
+        min_open_interest=10,
+        top_n=3,
+    )
+
+    assert result["candidates_considered"] == 4
+    assert len(result["results"]) == 3
+    first = result["results"][0]
+    assert first["contract_symbol"] == "TESTC110"
+    assert first["option_type"] == "call"
+    assert first["volume"] == 2000.0
+    assert first["open_interest"] == 1000.0
+    assert first["volume_open_interest_ratio"] == 2.0
+    assert first["moneyness_pct_from_spot"] == (110 / 105 - 1) * 100
+    assert result["data_quality"]["activity_is_not_order_flow"] is True
+
+
+def test_activity_summary_supports_explicit_volume_ranking() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_activity_summary(
+        "TEST",
+        max_expiries=1,
+        min_volume=0,
+        min_open_interest=0,
+        sort_by="volume",
+        top_n=2,
+    )
+
+    assert [row["contract_symbol"] for row in result["results"]] == [
+        "TESTC110",
+        "TESTP100",
+    ]
+
+
+def test_activity_summary_rejects_invalid_sort() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    try:
+        service.option_activity_summary(
+            "TEST",
+            sort_by="not-a-sort",  # type: ignore[arg-type]
+        )
+    except ValueError as exc:
+        assert "sort_by" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
