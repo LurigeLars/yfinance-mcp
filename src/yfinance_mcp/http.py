@@ -39,5 +39,5 @@ def main() -> None:
         transport="streamable-http",
         host=host,
         port=port,
-        streamable_http_path="/mcp",
+        path="/mcp",
     )
