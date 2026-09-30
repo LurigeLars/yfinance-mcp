@@ -78,9 +78,37 @@ Example client configuration:
 }
 ```
 
-No credentials or environment variables are required.
+No credentials are required.
 
-Remote transport, authentication, and network exposure are deliberately deployment-specific and are not part of this repository's V1.
+### Loopback HTTP
+
+The same tool surface can also run over Streamable HTTP. It binds to loopback by default:
+
+```bash
+yfinance-mcp-http
+```
+
+Default endpoint:
+
+```text
+http://127.0.0.1:8772/mcp
+```
+
+The optional environment variables `YFINANCE_MCP_HOST` and `YFINANCE_MCP_PORT` change the bind address and port. A non-loopback host is rejected unless `YFINANCE_MCP_ALLOW_NON_LOOPBACK=1` is also set explicitly.
+
+On Windows, the included installer creates a per-user, limited-privilege Scheduled Task and keeps the HTTP server on loopback:
+
+```powershell
+.\scripts\windows\install-http-task.ps1
+```
+
+A bounded live provider smoke test is available after installation:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\smoke_options.py NVDA
+```
+
+Authentication and Internet exposure remain deployment-specific. Do not expose the unauthenticated MCP HTTP endpoint directly to the Internet.
 
 ## Development
 
