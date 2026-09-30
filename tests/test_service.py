@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from yfinance_mcp.provider import ChainSnapshot
 from yfinance_mcp.service import OptionsService
 
@@ -289,3 +291,114 @@ def test_activity_summary_rejects_invalid_sort() -> None:
         assert "sort_by" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+
+def test_option_greeks_returns_bsm_metrics_and_explicit_assumptions() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_greeks(
+        "TEST",
+        "2026-10-02",
+        risk_free_rate=0.04,
+        spot_override=105.0,
+    )
+
+    assert result["model_assumptions"]["model"] == "Black-Scholes-Merton"
+    assert result["model_assumptions"]["spot_source"] == "caller_override"
+    assert result["model_assumptions"]["american_style_approximation"] is True
+    assert result["data_quality"]["not_dealer_positioning"] is True
+
+    call = result["calls"][0]
+    put = result["puts"][0]
+    assert call["model_status"] == "ok"
+    assert 0 < call["delta"] < 1
+    assert call["gamma"] > 0
+    assert call["vega_per_iv_point"] > 0
+    assert put["model_status"] == "ok"
+    assert -1 < put["delta"] < 0
+    assert put["gamma"] > 0
+
+
+def test_option_greeks_uses_caller_spot_instead_of_delayed_yahoo_spot() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    yahoo_spot = service.option_greeks(
+        "TEST",
+        "2026-10-02",
+        risk_free_rate=0.04,
+        option_type="calls",
+    )
+    live_spot = service.option_greeks(
+        "TEST",
+        "2026-10-02",
+        risk_free_rate=0.04,
+        spot_override=110.0,
+        option_type="calls",
+    )
+
+    assert yahoo_spot["model_assumptions"]["spot"] == 105.0
+    assert live_spot["model_assumptions"]["spot"] == 110.0
+    assert (
+        live_spot["calls"][1]["model_price"]
+        > yahoo_spot["calls"][1]["model_price"]
+    )
+
+
+def test_option_risk_map_is_unsigned_concentration_not_dealer_gamma() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_risk_map(
+        "TEST",
+        "2026-10-02",
+        risk_free_rate=0.04,
+        spot_override=105.0,
+        top_n=10,
+    )
+
+    assert result["total_unsigned_gamma_notional_per_1pct_move"] > 0
+    assert result["data_quality"]["not_dealer_positioning"] is True
+    assert "not dealer gamma" in result["data_quality"]["risk_map_notice"]
+    assert result["atm"]["one_standard_deviation_implied_move_pct"] > 0
+
+    rows = result["top_gamma_concentrations"]
+    assert rows
+    assert sum(row["gamma_concentration_share"] for row in rows) == pytest.approx(1.0)
+    assert all(row["unsigned_gamma_notional_per_1pct_move"] >= 0 for row in rows)
+
+
+def test_option_scenario_reprices_calls_for_spot_iv_and_time_shift() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    result = service.option_scenario(
+        "TEST",
+        "2026-10-02",
+        risk_free_rate=0.04,
+        spot_change_pct=5.0,
+        iv_change_points=-5.0,
+        days_forward=1,
+        spot_override=105.0,
+        option_type="calls",
+        sort_by="open_interest",
+    )
+
+    assert result["scenario"]["scenario_spot"] == pytest.approx(110.25)
+    assert (
+        result["scenario"]["scenario_years_to_expiry"]
+        < result["scenario"]["base_years_to_expiry"]
+    )
+    assert result["results"][0]["contract_symbol"] == "TESTC110"
+    assert result["results"][0]["model_price_change"] > 0
+    assert result["results"][0]["model_value_change_per_contract"] > 0
+
+
+def test_option_scenario_rejects_impossible_spot_move() -> None:
+    service = OptionsService(FakeProvider(make_snapshot()))
+
+    with pytest.raises(ValueError, match="spot_change_pct"):
+        service.option_scenario(
+            "TEST",
+            "2026-10-02",
+            risk_free_rate=0.04,
+            spot_change_pct=-100.0,
+        )
