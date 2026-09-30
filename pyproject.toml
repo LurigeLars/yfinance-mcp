@@ -22,7 +22,7 @@ yfinance-mcp = "yfinance_mcp:main"
 yfinance-mcp-http = "yfinance_mcp.http:main"
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
