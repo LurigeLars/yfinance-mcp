@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .provider import QUOTE_DELAY_NOTICE, SOURCE, ChainSnapshot, YFinanceProvider
@@ -162,7 +162,7 @@ def _underlying_summary(underlying: dict[str, Any]) -> dict[str, Any]:
     if market_timestamp is not None:
         try:
             market_time_utc = datetime.fromtimestamp(
-                market_timestamp, tz=timezone.utc
+                market_timestamp, tz=UTC
             ).isoformat()
         except (OverflowError, OSError, ValueError):
             market_time_utc = None
