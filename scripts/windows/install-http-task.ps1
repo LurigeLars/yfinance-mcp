@@ -1,7 +1,7 @@
 param(
     [string]$TaskName = "YFinanceMcpHttpServer",
-    [ValidateRange(1, 65535)]
-    [int]$Port = 8772
+    [ValidateRange(0, 65535)]
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +10,21 @@ $venvRoot = Join-Path $repoRoot ".venv"
 $python = Join-Path $venvRoot "Scripts\python.exe"
 $pythonw = Join-Path $venvRoot "Scripts\pythonw.exe"
 $launcher = Join-Path $PSScriptRoot "run-http-hidden.py"
+$portRegistry = Join-Path $env:LOCALAPPDATA "DockerLocalMCP\port-registry.ps1"
+
+if (Test-Path -LiteralPath $portRegistry -PathType Leaf) {
+    . $portRegistry
+    $preferred = if ($Port -gt 0) { $Port } else { 8772 }
+    $reservation = Reserve-McpPort -Service "yfinance-mcp-http" -PreferredPort $preferred -AdoptIfCommandContains "yfinance"
+    $Port = [int]$reservation.port
+}
+elseif ($Port -le 0) {
+    throw "Central MCP port registry is not installed. Install/update Docker-MCP first or pass an explicit -Port."
+}
+
+if ($Port -lt 1 -or $Port -gt 65535) {
+    throw "Port must be between 1 and 65535."
+}
 
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if (-not $uv) {
@@ -49,13 +64,19 @@ $taskParams = @{
 }
 Register-ScheduledTask @taskParams | Out-Null
 
-$listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $listener) {
+$listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($listener) {
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+    if (-not $owner -or ([string]$owner.CommandLine).IndexOf("yfinance", [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Reserved port $Port is already owned by an unexpected process (PID $($listener.OwningProcess))."
+    }
+}
+else {
     Start-ScheduledTask -TaskName $TaskName
     Start-Sleep -Seconds 3
 }
 
-$listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+$listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $listener) {
     $logPath = Join-Path $env:LOCALAPPDATA "yfinance-mcp\http.log"
     throw "The MCP server did not start on 127.0.0.1:$Port. Check $logPath"
