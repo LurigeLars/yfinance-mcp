@@ -1,6 +1,6 @@
 """Read-only Yahoo Finance options data exposed through MCP."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 
 def main() -> None:

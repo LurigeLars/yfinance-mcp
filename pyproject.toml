@@ -1,6 +1,6 @@
 [project]
 name = "yfinance-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Read-only MCP server for Yahoo Finance options data via yfinance"
 readme = "README.md"
 requires-python = ">=3.12"

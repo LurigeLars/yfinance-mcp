@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import yfinance_mcp.http as http_runtime
 from yfinance_mcp.http import http_settings
 
 
@@ -42,3 +43,27 @@ def test_invalid_http_port_is_rejected(
 
     with pytest.raises(RuntimeError):
         http_settings()
+
+
+def test_main_uses_fastmcp4_http_path_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.delenv("YFINANCE_MCP_HOST", raising=False)
+    monkeypatch.delenv("YFINANCE_MCP_PORT", raising=False)
+    monkeypatch.setattr(http_runtime.mcp, "run", fake_run)
+
+    http_runtime.main()
+
+    assert calls == [
+        {
+            "transport": "streamable-http",
+            "host": "127.0.0.1",
+            "port": 8772,
+            "path": "/mcp",
+        }
+    ]
