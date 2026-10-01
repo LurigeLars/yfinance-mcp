@@ -88,6 +88,8 @@ def test_news_batch_rejects_unbounded_symbol_set() -> None:
 def test_news_upstream_error_is_explicit() -> None:
     ticker = Mock()
     ticker.get_news.side_effect = RuntimeError("boom")
-    with patch("yfinance_mcp.news.yf.Ticker", return_value=ticker):
-        with pytest.raises(NewsUpstreamDataError):
-            NewsService().news_get("TEST")
+    with (
+        patch("yfinance_mcp.news.yf.Ticker", return_value=ticker),
+        pytest.raises(NewsUpstreamDataError),
+    ):
+        NewsService().news_get("TEST")
