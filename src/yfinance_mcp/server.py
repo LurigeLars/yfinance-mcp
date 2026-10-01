@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from . import __version__
+from .news import NewsService, NewsUpstreamDataError
 from .provider import UpstreamDataError
 from .service import OptionsService
 
@@ -17,6 +18,7 @@ _READ_TOOL = {
 }
 
 _service = OptionsService()
+_news_service = NewsService()
 
 mcp = FastMCP(
     "yfinance Options MCP",
@@ -25,6 +27,9 @@ mcp = FastMCP(
     instructions=(
         "Read-only option-market structure via yfinance/Yahoo Finance. "
         "Quotes may be delayed and are not execution-grade. "
+        "Use news_get/news_batch for bounded Yahoo Finance news discovery with "
+        "publisher provenance; material claims require primary or authoritative "
+        "wire verification. "
         "Use option_expirations before requesting an unfamiliar expiry. "
         "Use option_chain for contract-level volume, open interest, bid/ask and IV. "
         "Use option_positioning_summary when aggregate positioning is sufficient. "
@@ -43,9 +48,41 @@ mcp = FastMCP(
 def _safe_error(exc: Exception) -> ToolError:
     if isinstance(exc, ValueError):
         return ToolError(str(exc))
+    if isinstance(exc, NewsUpstreamDataError):
+        return ToolError("Yahoo Finance news data is currently unavailable.")
     if isinstance(exc, UpstreamDataError):
         return ToolError("Yahoo Finance options data is currently unavailable.")
-    return ToolError("Unable to retrieve options data.")
+    return ToolError("Unable to retrieve Yahoo Finance data.")
+
+
+@mcp.tool(annotations=_READ_TOOL)
+def news_get(
+    symbol: str,
+    count: int = 20,
+    tab: Literal["news", "all", "press releases"] = "all",
+) -> dict:
+    """Return bounded Yahoo Finance news for one symbol with publisher provenance."""
+    try:
+        return _news_service.news_get(symbol, count=count, tab=tab)
+    except Exception as exc:
+        raise _safe_error(exc) from None
+
+
+@mcp.tool(annotations=_READ_TOOL)
+def news_batch(
+    symbols: list[str],
+    count_per_symbol: int = 10,
+    tab: Literal["news", "all", "press releases"] = "all",
+) -> dict:
+    """Return bounded Yahoo Finance news for up to 100 symbols."""
+    try:
+        return _news_service.news_batch(
+            symbols,
+            count_per_symbol=count_per_symbol,
+            tab=tab,
+        )
+    except Exception as exc:
+        raise _safe_error(exc) from None
 
 
 @mcp.tool(annotations=_READ_TOOL)

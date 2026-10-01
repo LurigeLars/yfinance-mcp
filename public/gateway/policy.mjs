@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 
 export const ALL_ALLOWED_TOOLS = [
+  'news_get',
+  'news_batch',
   'option_expirations',
   'option_chain',
   'option_positioning_summary',

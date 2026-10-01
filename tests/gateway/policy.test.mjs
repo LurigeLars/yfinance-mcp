@@ -10,9 +10,11 @@ import {
   rewriteResponse,
 } from '../../public/gateway/policy.mjs';
 
-test('default allowlist exposes exactly the eight options tools', () => {
+test('default allowlist exposes the bounded news and options tools', () => {
   const allowed = parseAllowedTools();
   assert.deepEqual([...allowed], [
+    'news_get',
+    'news_batch',
     'option_expirations',
     'option_chain',
     'option_positioning_summary',
@@ -22,7 +24,7 @@ test('default allowlist exposes exactly the eight options tools', () => {
     'option_risk_map',
     'option_scenario',
   ]);
-  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 8);
+  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 10);
 });
 
 test('explicit allowlist override is authoritative', () => {
