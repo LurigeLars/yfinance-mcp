@@ -1,8 +1,8 @@
 # yfinance-mcp
 
-A small, read-only MCP server for options-market data and bounded theoretical options analytics provided by the upstream `yfinance` package.
+A small, read-only MCP server for bounded Yahoo Finance news discovery, options-market data, and bounded theoretical options analytics provided by the upstream `yfinance` package.
 
-The server is intentionally narrow: it exposes option expirations, raw option chains, positioning/activity summaries, and Black-Scholes-Merton greeks, unsigned gamma concentration, and scenario analysis. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
+The server is intentionally narrow: it exposes bounded per-symbol and batch news discovery plus option expirations, raw option chains, positioning/activity summaries, and Black-Scholes-Merton greeks, unsigned gamma concentration, and scenario analysis. It does not place orders, access brokerage accounts, or provide execution-grade quotes.
 
 ## Data source and limitations
 
@@ -13,6 +13,14 @@ Yahoo Finance option quotes may be delayed. Treat bid/ask and last prices as ana
 The yfinance project notes that Yahoo Finance data is intended for personal use and that users are responsible for complying with Yahoo's terms. Review the upstream yfinance documentation and Yahoo terms before using downloaded data beyond personal research.
 
 ## Tools
+
+### `news_get`
+
+Returns up to 50 Yahoo Finance news items for one symbol. Output is normalized to publisher, publication timestamp, canonical URL, upstream ID, related tickers, and content type. It is discovery data: material claims should be verified against primary sources or authoritative wires.
+
+### `news_batch`
+
+Queries up to 100 unique symbols with an explicit per-symbol bound (default 10, maximum 50). Partial upstream failures are returned explicitly in `failed_symbols`; successful symbols are retained. Syndicated duplicates are intentionally not interpreted here and should be canonicalized downstream.
 
 ### `option_expirations`
 
@@ -146,7 +154,7 @@ A bounded live provider smoke test is available after installation:
 Authentication and Internet exposure remain deployment-specific. Do not expose the unauthenticated MCP HTTP endpoint directly to the Internet.
 ### Protected remote gateway
 
-A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the eight read-only options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
+A separate Node gateway is included for deployments that place Cloudflare Access in front of the MCP server. The gateway independently validates the Access JWT, strips client credentials before forwarding, exposes only the bounded read-only news and options tools, applies request/rate limits, and keeps the Python MCP endpoint on loopback.
 
 Copy `public/gateway.env.example` to the ignored `public/gateway.env`, fill in the deployment-specific Access values, then run:
 
