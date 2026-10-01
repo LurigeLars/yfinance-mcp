@@ -122,11 +122,9 @@ def test_news_batch_reports_partial_coverage_without_hiding_successes() -> None:
     def factory(symbol: str):
         return good if symbol == "GOOD" else bad
 
-    search = Mock()
-    search.news = []
     with (
         patch("yfinance_mcp.news.yf.Ticker", side_effect=factory),
-        patch("yfinance_mcp.news.yf.Search", return_value=search),
+        patch("yfinance_mcp.news.yf.Search", side_effect=RuntimeError("fallback failed")),
     ):
         result = NewsService().news_batch(["GOOD", "BAD", "GOOD"], count_per_symbol=3)
 
