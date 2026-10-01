@@ -145,15 +145,52 @@ class NewsService:
         count = _validate_count(count)
         tab = _validate_tab(tab)
 
+        raw: list[dict[str, Any]] | None = None
+        retrieval_path = "ticker_get_news"
+        ticker_error: Exception | None = None
         try:
-            raw = yf.Ticker(normalized_symbol).get_news(count=count, tab=tab)
+            ticker_raw = yf.Ticker(normalized_symbol).get_news(count=count, tab=tab)
+            if ticker_raw is None:
+                ticker_raw = []
+            if not isinstance(ticker_raw, list):
+                raise NewsUpstreamDataError("news payload is malformed")
+            raw = ticker_raw
         except Exception as exc:
-            raise NewsUpstreamDataError("news is unavailable") from exc
+            ticker_error = exc
 
-        if raw is None:
-            raw = []
-        if not isinstance(raw, list):
-            raise NewsUpstreamDataError("news payload is malformed")
+        # Yahoo's ticker-specific NCP endpoint can return an empty stream even for liquid,
+        # actively covered symbols. For ordinary news discovery, fall back to Yahoo's
+        # separate finance-search endpoint exposed by yfinance.Search.
+        if tab in {"news", "all"} and not raw:
+            try:
+                search = yf.Search(
+                    normalized_symbol,
+                    max_results=1,
+                    news_count=count,
+                    lists_count=0,
+                    include_cb=False,
+                    include_nav_links=False,
+                    include_research=False,
+                    include_cultural_assets=False,
+                    recommended=0,
+                    raise_errors=True,
+                )
+                search_raw = search.news
+                if not isinstance(search_raw, list):
+                    raise NewsUpstreamDataError("search news payload is malformed")
+                raw = search_raw
+                retrieval_path = "search_fallback"
+            except Exception as exc:
+                if ticker_error is not None:
+                    raise NewsUpstreamDataError("news is unavailable") from exc
+                # An empty ticker response is still a valid bounded result if the secondary
+                # Yahoo search path itself fails.
+                raw = raw or []
+
+        if ticker_error is not None and tab == "press releases":
+            raise NewsUpstreamDataError("news is unavailable") from ticker_error
+
+        raw = raw or []
 
         items = [
             normalized
@@ -169,6 +206,7 @@ class NewsService:
             "requested_count": count,
             "count": len(items),
             "items": items,
+            "retrieval_path": retrieval_path,
             "data_quality": {
                 "discovery_only": True,
                 "verification_required_for_material_claims": True,
@@ -207,6 +245,7 @@ class NewsService:
                 "symbol": symbol,
                 "count": result["count"],
                 "items": result["items"],
+                "retrieval_path": result["retrieval_path"],
             })
 
         return {
