@@ -27,8 +27,9 @@ mcp = FastMCP(
     instructions=(
         "Read-only option-market structure via yfinance/Yahoo Finance. "
         "Quotes may be delayed and are not execution-grade. "
-        "Use news_get/news_batch for bounded Yahoo Finance news discovery with publisher provenance; "
-        "material claims require primary or authoritative wire verification. "
+        "Use news_get/news_batch for bounded Yahoo Finance news discovery with "
+        "publisher provenance; material claims require primary or authoritative "
+        "wire verification. "
         "Use option_expirations before requesting an unfamiliar expiry. "
         "Use option_chain for contract-level volume, open interest, bid/ask and IV. "
         "Use option_positioning_summary when aggregate positioning is sufficient. "
