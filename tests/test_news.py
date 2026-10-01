@@ -45,14 +45,72 @@ def test_news_get_is_bounded_and_preserves_provenance() -> None:
             "clickThroughUrl": {"url": "https://example.test/wire-1"},
         }
     }]
-    with patch("yfinance_mcp.news.yf.Ticker", return_value=ticker):
+    with (
+        patch("yfinance_mcp.news.yf.Ticker", return_value=ticker),
+        patch("yfinance_mcp.news.yf.Search") as search_cls,
+    ):
         result = NewsService().news_get("exm", count=5, tab="all")
 
     ticker.get_news.assert_called_once_with(count=5, tab="all")
+    search_cls.assert_not_called()
     assert result["symbol"] == "EXM"
     assert result["requested_count"] == 5
     assert result["items"][0]["publisher"] == "Reuters"
     assert result["data_quality"]["verification_required_for_material_claims"] is True
+
+
+def test_news_get_falls_back_to_search_when_ticker_stream_is_empty() -> None:
+    ticker = Mock()
+    ticker.get_news.return_value = []
+    search = Mock()
+    search.news = [{
+        "uuid": "search-1",
+        "title": "Example search story",
+        "publisher": "Reuters",
+        "providerPublishTime": 1790856000,
+        "link": "https://example.test/search-1",
+        "relatedTickers": ["EXM"],
+    }]
+
+    with (
+        patch("yfinance_mcp.news.yf.Ticker", return_value=ticker),
+        patch("yfinance_mcp.news.yf.Search", return_value=search) as search_cls,
+    ):
+        result = NewsService().news_get("exm", count=5, tab="all")
+
+    search_cls.assert_called_once_with(
+        "EXM",
+        max_results=1,
+        news_count=5,
+        lists_count=0,
+        include_cb=False,
+        include_nav_links=False,
+        include_research=False,
+        include_cultural_assets=False,
+        recommended=0,
+        raise_errors=True,
+    )
+    assert result["retrieval_path"] == "search_fallback"
+    assert result["count"] == 1
+    assert result["items"][0]["publisher"] == "Reuters"
+    assert result["items"][0]["url"] == "https://example.test/search-1"
+
+
+def test_news_get_search_fallback_recovers_from_ticker_endpoint_error() -> None:
+    ticker = Mock()
+    ticker.get_news.side_effect = RuntimeError("ncp endpoint failed")
+    search = Mock()
+    search.news = [{"title": "Recovered story", "publisher": "Newswire"}]
+
+    with (
+        patch("yfinance_mcp.news.yf.Ticker", return_value=ticker),
+        patch("yfinance_mcp.news.yf.Search", return_value=search),
+    ):
+        result = NewsService().news_get("TEST", count=3, tab="news")
+
+    assert result["retrieval_path"] == "search_fallback"
+    assert result["count"] == 1
+
 
 
 def test_news_batch_reports_partial_coverage_without_hiding_successes() -> None:
@@ -64,7 +122,10 @@ def test_news_batch_reports_partial_coverage_without_hiding_successes() -> None:
     def factory(symbol: str):
         return good if symbol == "GOOD" else bad
 
-    with patch("yfinance_mcp.news.yf.Ticker", side_effect=factory):
+    with (
+        patch("yfinance_mcp.news.yf.Ticker", side_effect=factory),
+        patch("yfinance_mcp.news.yf.Search", side_effect=RuntimeError("fallback failed")),
+    ):
         result = NewsService().news_batch(["GOOD", "BAD", "GOOD"], count_per_symbol=3)
 
     assert result["requested_symbols"] == ["GOOD", "BAD"]
@@ -90,6 +151,7 @@ def test_news_upstream_error_is_explicit() -> None:
     ticker.get_news.side_effect = RuntimeError("boom")
     with (
         patch("yfinance_mcp.news.yf.Ticker", return_value=ticker),
+        patch("yfinance_mcp.news.yf.Search", side_effect=RuntimeError("search boom")),
         pytest.raises(NewsUpstreamDataError),
     ):
         NewsService().news_get("TEST")
