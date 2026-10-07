@@ -1,0 +1,48 @@
+name: Refresh FastMCP lock
+
+on:
+  push:
+    branches:
+      - deps/fastmcp-4.0.11
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deps/fastmcp-4.0.11
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Refresh FastMCP lock
+        run: uv lock --upgrade-package fastmcp
+      - name: Verify resolved versions
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          lock = tomllib.loads(Path("uv.lock").read_text())
+          versions = {p["name"]: p["version"] for p in lock["package"]}
+          assert versions["fastmcp"] == "4.0.11", versions["fastmcp"]
+          assert versions["fastmcp-slim"] == "4.0.11", versions["fastmcp-slim"]
+          PY
+      - name: Install and test
+        run: |
+          uv sync --locked --extra dev --python 3.12
+          uv run --locked ruff check .
+          uv run --locked pytest
+      - name: Commit generated lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/refresh-fastmcp-lock.yml
+          git add uv.lock
+          git diff --cached --quiet && exit 0
+          git commit -m "deps: refresh lock for FastMCP 4.0.11"
+          git push origin HEAD:deps/fastmcp-4.0.11
