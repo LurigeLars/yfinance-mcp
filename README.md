@@ -21,11 +21,11 @@ news without turning the MCP into a generic market-data or brokerage interface.
 The upstream [yfinance](https://github.com/ranaroussi/yfinance) package is useful for
 Python applications, but an AI agent needs a different interface:
 
-- a small set of explicit tools rather than arbitrary library access;
-- bounded responses so option chains and news cannot grow without control;
-- normalized output with predictable semantics;
-- deterministic summaries that do not depend on free-form model interpretation;
-- clear separation between observed market data and theoretical calculations;
+- a small set of explicit tools rather than arbitrary library access.
+- bounded responses so option chains and news cannot grow without control.
+- normalized output with predictable semantics.
+- deterministic summaries that do not depend on free-form model interpretation.
+- clear separation between observed market data and theoretical calculations.
 - no brokerage login, account access or order execution.
 
 This server is intentionally narrow. It exists primarily to fill two research gaps:
@@ -56,12 +56,12 @@ Everything is read-only.
 
 ## What it deliberately does not do
 
-- brokerage authentication;
-- portfolio or account access;
-- order placement or execution;
-- realtime streaming;
-- generic Yahoo quote/fundamental coverage;
-- claims about trade aggressor side, sweeps or opening/closing flow;
+- brokerage authentication.
+- portfolio or account access.
+- order placement or execution.
+- realtime streaming.
+- generic Yahoo quote/fundamental coverage.
+- claims about trade aggressor side, sweeps or opening/closing flow.
 - inference of dealer long/short gamma from open interest alone.
 
 Those boundaries are deliberate. New tools should solve a concrete research gap rather
@@ -190,16 +190,16 @@ Returns the expiration dates Yahoo Finance currently exposes for an optionable s
 Returns calls, puts or both for one expiration, including available upstream fields such
 as:
 
-- contract symbol;
-- last trade date;
-- strike;
-- last price;
-- bid / ask;
-- volume;
-- open interest;
-- implied volatility;
-- in-the-money flag;
-- contract size;
+- contract symbol.
+- last trade date.
+- strike.
+- last price.
+- bid / ask.
+- volume.
+- open interest.
+- implied volatility.
+- in-the-money flag.
+- contract size.
 - currency.
 
 Optional filters can narrow strike, volume and open-interest ranges. There is no hidden
@@ -213,13 +213,13 @@ forwarding Yahoo's full auxiliary payload.
 
 Produces a compact per-expiration summary with:
 
-- total call and put volume;
-- total call and put open interest;
-- put/call volume and OI ratios;
-- highest-volume strikes;
-- highest-OI strikes;
-- highest volume/OI contracts where OI is positive;
-- IV distribution statistics;
+- total call and put volume.
+- total call and put open interest.
+- put/call volume and OI ratios.
+- highest-volume strikes.
+- highest-OI strikes.
+- highest volume/OI contracts where OI is positive.
+- IV distribution statistics.
 - underlying quote metadata.
 
 Absolute volume and OI are retained beside ratios so a large ratio cannot hide a tiny
@@ -229,11 +229,11 @@ denominator.
 
 Summarizes a bounded consecutive expiration window (default 8, maximum 12), including:
 
-- days to expiry;
-- call/put volume and OI totals;
-- put/call ratios;
-- median IV by side;
-- nearest-to-spot strike with call/put IV;
+- days to expiry.
+- call/put volume and OI totals.
+- put/call ratios.
+- median IV by side.
+- nearest-to-spot strike with call/put IV.
 - highest combined-OI strikes.
 
 `start_index` pages through the expiration list and the response preserves the explicit
@@ -246,8 +246,8 @@ open-interest thresholds.
 
 Ranking can use:
 
-- volume/OI ratio;
-- absolute volume;
+- volume/OI ratio.
+- absolute volume.
 - absolute open interest.
 
 The output includes contract-level bid/ask, IV, strike distance from spot and last-trade
@@ -259,11 +259,11 @@ This is activity evidence, not directional order flow.
 
 Calculates Black-Scholes-Merton theoretical:
 
-- price;
-- delta;
-- gamma;
-- theta per day;
-- vega per IV point;
+- price.
+- delta.
+- gamma.
+- theta per day.
+- vega per IV point.
 - rho per rate point.
 
 The annualized risk-free rate is an explicit input. Continuous dividend yield defaults
@@ -287,8 +287,8 @@ contract IVs.
 
 Reprices a bounded single-expiration contract set under explicit changes to:
 
-- underlying spot;
-- implied volatility, expressed as absolute volatility points;
+- underlying spot.
+- implied volatility, expressed as absolute volatility points.
 - time forward.
 
 Contracts can be ranked by open interest, absolute model-price change or unsigned gamma
@@ -304,10 +304,10 @@ expiry at 16:00 America/New_York.
 US equity and ETF options are generally American-style, so this is an approximation.
 The model does not capture, among other things:
 
-- early exercise;
-- discrete dividend timing;
-- borrow constraints;
-- full volatility-surface dynamics;
+- early exercise.
+- discrete dividend timing.
+- borrow constraints.
+- full volatility-surface dynamics.
 - market microstructure.
 
 Use `spot_override` with a fresher underlying price when available, and use venue or
@@ -329,8 +329,8 @@ http://127.0.0.1:8772/mcp
 
 Environment variables:
 
-- `YFINANCE_MCP_HOST` — bind host;
-- `YFINANCE_MCP_PORT` — bind port;
+- `YFINANCE_MCP_HOST` — bind host.
+- `YFINANCE_MCP_PORT` — bind port.
 - `YFINANCE_MCP_ALLOW_NON_LOOPBACK=1` — explicit opt-in required for a non-loopback
   bind.
 
@@ -360,11 +360,11 @@ Do not expose the unauthenticated Python MCP HTTP endpoint directly to the Inter
 
 A separate Node gateway is included for deployments protected by Cloudflare Access. It:
 
-- validates the Access JWT independently;
-- strips client credentials before forwarding;
-- exposes only the ten reviewed read-only tools;
-- applies request/rate limits;
-- compacts MCP schemas/results for model use;
+- validates the Access JWT independently.
+- strips client credentials before forwarding.
+- exposes only the ten reviewed read-only tools.
+- applies request/rate limits.
+- compacts MCP schemas/results for model use.
 - keeps the Python MCP endpoint on loopback.
 
 Copy the example environment file:
@@ -400,11 +400,11 @@ node --test tests/gateway/*.test.mjs
 
 The repository runs:
 
-- CI on Python 3.12 and 3.13;
-- gateway tests;
-- static analysis;
-- CodeQL;
-- Dependabot;
+- CI on Python 3.12 and 3.13.
+- gateway tests.
+- static analysis.
+- CodeQL.
+- Dependabot.
 - a scheduled upstream watch for locked yfinance and FastMCP releases.
 
 Dependency updates should continue through normal review rather than by vendoring
@@ -416,12 +416,12 @@ This repository is public.
 
 Do not commit:
 
-- credentials or access tokens;
-- cookies;
-- personal identifiers or email addresses;
-- workstation-specific paths;
-- private domains/endpoints;
-- Cloudflare tunnel identifiers;
+- credentials or access tokens.
+- cookies.
+- personal identifiers or email addresses.
+- workstation-specific paths.
+- private domains/endpoints.
+- Cloudflare tunnel identifiers.
 - brokerage or account data.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
