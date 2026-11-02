@@ -8,6 +8,10 @@ updates:
       time: "05:20"
       timezone: Europe/Stockholm
     groups:
+      security-minor-patch:
+        applies-to: "security-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
       python-dependencies:
         applies-to: version-updates
         patterns:
@@ -29,6 +33,10 @@ updates:
       time: "05:30"
       timezone: Europe/Stockholm
     groups:
+      security-minor-patch:
+        applies-to: "security-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
       container-images:
         applies-to: version-updates
         patterns:
@@ -50,6 +58,10 @@ updates:
       time: "05:35"
       timezone: Europe/Stockholm
     groups:
+      security-minor-patch:
+        applies-to: "security-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
       github-actions:
         applies-to: version-updates
         patterns:
