@@ -126,14 +126,18 @@ function b64json(segment) {
 }
 
 export function createAccessVerifier(config, fetchImpl = fetch) {
-  const cache = { keys: new Map(), fetchedAt: 0 };
+  const cache = { keys: new Map(), fetchedAt: 0, attemptedAt: 0 };
 
   async function accessKey(kid) {
     const now = Date.now();
     const stale = cache.fetchedAt === 0 || now - cache.fetchedAt > 3_600_000;
     const missingAndRefreshable = !cache.keys.has(kid) && (cache.fetchedAt === 0 || now - cache.fetchedAt > 30_000);
+    // At most one certs fetch per 30 s, also when it fails: otherwise every request during a
+    // Cloudflare outage waits 5 s on a new fetch instead of failing closed at once.
+    const mayFetch = now - cache.attemptedAt > 30_000;
 
-    if (stale || missingAndRefreshable) {
+    if ((stale || missingAndRefreshable) && mayFetch) {
+      cache.attemptedAt = now;
       // ACCESS_TEAM_DOMAIN is constrained to one *.cloudflareaccess.com team label.
       // codeql[js/request-forgery]
       const response = await fetchImpl(`${config.accessIssuer}/cdn-cgi/access/certs`, {

@@ -3,7 +3,27 @@ from dataclasses import replace
 import pytest
 
 from yfinance_mcp.provider import ChainSnapshot
-from yfinance_mcp.service import OptionsService
+from yfinance_mcp.service import OptionsService, _bsm_metrics, _days_to_expiry
+
+
+def test_bsm_matches_textbook_reference_values() -> None:
+    # Hull's standard example: S=K=100, T=1y, r=5 %, q=0, sigma=20 %.
+    args = dict(spot=100.0, strike=100.0, years_to_expiry=1.0, volatility=0.2,
+                risk_free_rate=0.05, dividend_yield=0.0)
+    call, put = _bsm_metrics("call", **args), _bsm_metrics("put", **args)
+    assert call["model_price"] == pytest.approx(10.4506, abs=1e-4)
+    assert put["model_price"] == pytest.approx(5.5735, abs=1e-4)
+    assert call["delta"] == pytest.approx(0.6368, abs=1e-4)
+    assert put["delta"] == pytest.approx(-0.3632, abs=1e-4)
+    assert call["gamma"] == pytest.approx(0.018762, abs=1e-6)
+    # Put-call parity: C - P = S - K e^{-rT}
+    assert call["model_price"] - put["model_price"] == pytest.approx(100 - 100 * 0.951229, abs=1e-4)
+
+
+def test_days_to_expiry_uses_the_new_york_calendar_date() -> None:
+    # 01:00 UTC on Nov 6 is still Nov 5 in New York.
+    assert _days_to_expiry("2026-11-06", "2026-11-06T01:00:00+00:00") == 1
+    assert _days_to_expiry("2026-11-06", "2026-11-06T15:00:00+00:00") == 0
 
 
 class FakeProvider:

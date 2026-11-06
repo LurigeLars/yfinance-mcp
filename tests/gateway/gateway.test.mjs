@@ -74,6 +74,16 @@ function makeJwt(privateKey, kid, claims) {
   return `${data}.${signature}`;
 }
 
+test('a failing certs endpoint is fetched at most once per 30 seconds', async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; return { ok: false, status: 503 }; };
+  const verify = createAccessVerifier(loadConfig(validEnv), fetchImpl);
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const token = makeJwt(privateKey, 'k', { aud: ['aud-123'] });
+  for (let i = 0; i < 5; i++) assert.equal((await verify(token)).ok, false);
+  assert.equal(calls, 1);
+});
+
 test('Access verifier checks signature, audience, issuer and allowed email', async () => {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const kid = 'test-key';

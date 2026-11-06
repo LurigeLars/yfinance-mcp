@@ -203,9 +203,9 @@ def _compact_side_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _days_to_expiry(expiry: str, retrieved_at: str) -> int | None:
     try:
         expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
-        retrieved_date = datetime.fromisoformat(
-            retrieved_at.replace("Z", "+00:00")
-        ).date()
+        # Count in the listing's calendar (New York), like _years_to_expiry; a UTC date is a
+        # day ahead every evening after 20:00 New York time.
+        retrieved_date = _valuation_time(retrieved_at).astimezone(_US_EASTERN).date()
     except ValueError:
         return None
     return (expiry_date - retrieved_date).days
