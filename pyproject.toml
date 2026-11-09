@@ -6,15 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
-    "fastmcp==4.1.4",
-    "pandas>=3.1.0,<4",
-    "yfinance>=1.7,<2",
+    "fastmcp==4.1.6",
+    "pandas>=3.1.1,<4",
+    "yfinance>=1.8.0,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.2.0,<10",
-    "ruff>=0.17.3,<1",
+    "ruff>=0.17.4,<1",
 ]
 
 [project.scripts]
