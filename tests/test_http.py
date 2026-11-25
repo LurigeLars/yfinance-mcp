@@ -67,3 +67,39 @@ def test_main_uses_fastmcp4_http_path_keyword(
             "path": "/mcp",
         }
     ]
+
+
+def test_actual_http_transport_across_protocol_eras(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastmcp.utilities.tests import asgi_server
+
+    from yfinance_mcp import server
+
+    expected = {"symbol": "TEST", "expirations": ["2027-01-15"]}
+    monkeypatch.setattr(
+        server, "_service",
+        SimpleNamespace(option_expirations=lambda symbol: {**expected, "symbol": symbol}),
+    )
+
+    async def run() -> None:
+        # Exercise the real Streamable HTTP application without a socket,
+        # external market-data requests or credentials.
+        async with asgi_server(server.mcp, transport="streamable-http", path="/mcp") as http:
+            baseline = None
+            for mode in ("auto", "2026-07-28", "legacy"):
+                async with http.client(mode=mode) as client:
+                    if mode == "legacy":
+                        assert client.protocol_version != "2026-07-28"
+                    else:
+                        assert client.protocol_version == "2026-07-28"
+                    names = {tool.name for tool in await client.list_tools()}
+                    assert "option_expirations" in names
+                    result = await client.call_tool("option_expirations", {"symbol": "TEST"})
+                    assert result.data == expected
+                    if baseline is None:
+                        baseline = names
+                    assert names == baseline
+
+    asyncio.run(run())
