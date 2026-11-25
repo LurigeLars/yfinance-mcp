@@ -12,8 +12,8 @@ import sqlite3
 from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Mapping
-from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from contextlib import closing, suppress
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
@@ -31,7 +31,7 @@ NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 def utc_day() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 def exception_code(exc: BaseException) -> str:
@@ -60,8 +60,13 @@ def result_code(result: object) -> str:
              else getattr(result, "is_error", False))
     if isinstance(data, Mapping):
         error = error or data.get("success") is False
+        error = error or data.get("state") in ("error", "timed_out", "denied")
         error = error or (data.get("success") is not True and bool(data.get("error")))
         if error:
+            if data.get("state") == "timed_out":
+                return "TIMEOUT"
+            if data.get("state") == "denied":
+                return "AUTH"
             code = data.get("error_code")
             if isinstance(code, str) and code in CODES and code != "OK":
                 return code
@@ -92,7 +97,7 @@ class UsageStore:
     def _flush(self):
         if not self.enabled or not self._pending:
             return
-        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=RETENTION-1)).isoformat()
+        cutoff = (datetime.now(UTC).date() - timedelta(days=RETENTION-1)).isoformat()
         try:
             with closing(self._connect()) as conn, conn:
                 conn.execute("DELETE FROM usage WHERE day < ?", (cutoff,))
@@ -139,14 +144,14 @@ class UsageStore:
             raise ValueError("Invalid report bounds")
         if tool is not None and not NAME.fullmatch(tool):
             raise ValueError("Invalid tool name")
-        first = (datetime.now(timezone.utc).date() - timedelta(days=days-1)).isoformat()
+        first = (datetime.now(UTC).date() - timedelta(days=days-1)).isoformat()
         today = utc_day()
         with self._lock:
             self._flush()
             rows = []
             if self.path.is_file():
                 with closing(self._connect()) as conn, conn:
-                    cutoff = (datetime.now(timezone.utc).date()
+                    cutoff = (datetime.now(UTC).date()
                               - timedelta(days=RETENTION-1)).isoformat()
                     conn.execute("DELETE FROM usage WHERE day < ?", (cutoff,))
                     rows = conn.execute(
@@ -226,17 +231,13 @@ async def observe_call(store, name, context, call_next):
             code = "UNCLASSIFIED_ERROR"
         return result
     except BaseException as exc:
-        try:
+        with suppress(Exception):
             code = exception_code(exc)
-        except Exception:
-            pass
         raise
     finally:
-        try:
+        # Observability must never change a financial or operational result.
+        with suppress(Exception):
             store.record(name, (perf_counter()-started)*1000, code)
-        except Exception:
-            # Observability must never change a financial or operational result.
-            pass
 
 SERVICE = "yfinance-mcp"
 ENV_PREFIX = "YFINANCE"

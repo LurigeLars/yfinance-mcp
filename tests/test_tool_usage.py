@@ -48,6 +48,7 @@ class UsageTest(TestCase):
 
     def test_registered_tool_inventory_matches(self):
         from fastmcp import Client
+
         from yfinance_mcp.server import mcp
 
         async def names():
@@ -55,3 +56,34 @@ class UsageTest(TestCase):
                 return {tool.name for tool in await client.list_tools()}
 
         self.assertEqual(KNOWN_TOOLS | {"tool_usage"}, asyncio.run(names()))
+
+    def test_actual_mcp_middleware_counts_success_and_failure(self):
+        from fastmcp import Client, FastMCP
+        from fastmcp.exceptions import ToolError
+
+        from yfinance_mcp.tool_usage import ToolUsageMiddleware
+
+        async def run(store):
+            server = FastMCP("metrics-test")
+            server.add_middleware(ToolUsageMiddleware(store))
+
+            @server.tool
+            def quote() -> dict:
+                return {"success": True, "secret": "PRIVATE_RESPONSE"}
+
+            @server.tool
+            def other() -> str:
+                raise ToolError("PRIVATE_ERROR")
+
+            async with Client(server) as client:
+                await client.call_tool("quote", {})
+                await client.call_tool("other", {}, raise_on_error=False)
+
+        with TemporaryDirectory() as root, patch.dict("os.environ", {"PYTEST_CURRENT_TEST": ""}):
+            store = UsageStore(Path(root) / "usage.db", frozenset({"quote", "other"}))
+            asyncio.run(run(store))
+            report = store.report()
+            self.assertEqual(2, report["recorded_calls"])
+            self.assertEqual(1, report["recorded_errors"])
+            self.assertNotIn(b"PRIVATE_RESPONSE", store.path.read_bytes())
+            self.assertNotIn(b"PRIVATE_ERROR", store.path.read_bytes())
