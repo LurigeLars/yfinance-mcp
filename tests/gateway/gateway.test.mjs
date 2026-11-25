@@ -230,6 +230,17 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
   const blockedBody = await blocked.json();
   assert.equal(blockedBody.error.code, -32601);
   assert.equal(upstreamCalls, 2);
+  const modernListed = await fetch(url, {
+    method: 'POST',
+    headers: { ...modernHeaders, 'mcp-method': 'tools/list' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 4, method: 'tools/list', params: { _meta: modernMeta },
+    }),
+  });
+  const modernListedBody = await modernListed.json();
+  assert.deepEqual(modernListedBody.result.tools.map(tool => tool.name), ['option_chain']);
+  assert.equal(received[2].headers['mcp-session-id'], undefined);
+  assert.equal(upstreamCalls, 3);
   const modernBlocked = await fetch(url, {
     method: 'POST',
     headers: { ...modernHeaders, 'mcp-method': 'tools/call', 'mcp-name': 'not_public' },
@@ -239,7 +250,7 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
     }),
   });
   assert.equal((await modernBlocked.json()).error.code, -32601);
-  assert.equal(upstreamCalls, 2);
+  assert.equal(upstreamCalls, 3);
 });
 
 
