@@ -430,3 +430,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 Apache-2.0 for this MCP wrapper. Market data retrieved from Yahoo Finance remains subject
 to the applicable upstream data terms.
+
+### Local tool usage metrics
+
+`tool_usage(days=7, limit=50, tool=None)` reports per-tool counts, errors, approximate histogram median/p95 upper bounds, and registered tools without observed calls. Local SQLite aggregates are retained for 30 UTC days and written in batches (next call after five seconds, 64 calls, report or orderly exit). A crash can lose a pending batch. No arguments, response bodies, symbols, account identifiers, session IDs or free-form errors are saved. Disable with `YFINANCE_MCP_TOOL_USAGE=off` before startup. Metrics cover the canonical outer MCP server, not direct internal calls or the network. A tool with no observed calls is not necessarily obsolete; verify coverage, consumers and recovery dependencies. Fixed error categories may not identify every upstream/business failure.

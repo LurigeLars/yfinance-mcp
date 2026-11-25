@@ -13,6 +13,7 @@ import {
 test('default allowlist exposes the bounded news and options tools', () => {
   const allowed = parseAllowedTools();
   assert.deepEqual([...allowed], [
+    'tool_usage',
     'news_get',
     'news_batch',
     'option_expirations',
@@ -24,7 +25,7 @@ test('default allowlist exposes the bounded news and options tools', () => {
     'option_risk_map',
     'option_scenario',
   ]);
-  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 10);
+  assert.equal(ALL_ALLOWED_TOOLS.split(',').length, 11);
 });
 
 test('explicit allowlist override is authoritative', () => {
