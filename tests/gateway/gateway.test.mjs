@@ -8,6 +8,7 @@ import {
   createAccessVerifier,
   createGatewayServer,
   isAllowedPath,
+  isLocalRequest,
   loadConfig,
 } from '../../public/gateway/gateway.mjs';
 
@@ -302,4 +303,69 @@ test('failed Access refresh is throttled, expired keys are denied, and recovery 
   unavailable = false;
   assert.equal((await verify(token)).ok, true);
   assert.equal(calls, 3);
+});
+
+test('local requests need a loopback Host and no foreign Origin', () => {
+  for (const host of ['127.0.0.1:8773', 'localhost:8773', 'LOCALHOST', '[::1]:8773']) {
+    assert.equal(isLocalRequest({ host }), true, host);
+  }
+  for (const host of ['evil.example:8773', '127.0.0.1.evil.example', '192.0.2.10:8773', '', undefined]) {
+    assert.equal(isLocalRequest({ host }), false, String(host));
+  }
+  assert.equal(isLocalRequest({}), false);
+  assert.equal(isLocalRequest(undefined), false);
+
+  const host = '127.0.0.1:8773';
+  for (const origin of ['http://localhost:3000', 'http://127.0.0.1:8773', 'http://[::1]']) {
+    assert.equal(isLocalRequest({ host, origin }), true, origin);
+  }
+  for (const origin of ['https://evil.example', 'http://localhost.evil.example', 'null', '']) {
+    assert.equal(isLocalRequest({ host, origin }), false, origin);
+  }
+});
+
+test('local gateway refuses a rebound Host or a foreign Origin before reaching upstream', async t => {
+  let upstreamCalls = 0;
+  const upstream = http.createServer((req, res) => {
+    upstreamCalls += 1;
+    req.resume();
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [] } }));
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => upstream.close());
+
+  const gateway = createGatewayServer({
+    GATEWAY_MODE: 'local',
+    UPSTREAM_HOST: '127.0.0.1',
+    UPSTREAM_PORT: String(upstream.address().port),
+    ALLOWED_TOOLS: 'option_chain',
+  });
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve));
+  t.after(() => gateway.close());
+  const port = gateway.address().port;
+
+  // fetch() cannot set Host, so use http.request to send what a rebound browser would.
+  const post = headers => new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path: '/mcp',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+    }, res => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }));
+  });
+
+  assert.equal(await post({ host: `evil.example:${port}` }), 403);
+  assert.equal(await post({ origin: 'https://evil.example' }), 403);
+  assert.equal(upstreamCalls, 0);
+
+  assert.equal(await post({}), 200);
+  assert.equal(await post({ host: `localhost:${port}`, origin: `http://localhost:${port}` }), 200);
+  assert.equal(upstreamCalls, 2);
 });
