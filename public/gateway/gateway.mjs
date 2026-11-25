@@ -395,6 +395,7 @@ export function createGatewayServer(env = process.env, dependencies = {}) {
           if (
             message?.method === 'tools/list'
             || message?.method === 'initialize'
+            || message?.method === 'server/discover'
             || message?.method === 'tools/call'
           ) {
             ctx = { allowedTools: config.allowedTools, compactToolResults: true };
