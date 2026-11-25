@@ -30,6 +30,19 @@ function isLoopbackHost(value) {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1';
 }
 
+// A browser can reach loopback too. With DNS rebinding a foreign page becomes same-origin
+// with this port, so the socket address alone does not prove a local caller: require a
+// loopback Host and reject any Origin that is not loopback.
+export function isLocalRequest(headers) {
+  const hostname = value => new URL(value).hostname.replace(/^\[|\]$/g, '');
+  try {
+    if (!isLoopbackHost(hostname(`http://${headers?.host ?? ''}`))) return false;
+    return headers.origin === undefined || isLoopbackHost(hostname(headers.origin));
+  } catch {
+    return false;
+  }
+}
+
 export function loadConfig(env = process.env) {
   const mode = String(env.GATEWAY_MODE ?? 'cloudflare').trim().toLowerCase();
   if (!['cloudflare', 'local'].includes(mode)) {
@@ -361,6 +374,10 @@ export function createGatewayServer(env = process.env, dependencies = {}) {
       if (config.mode === 'local') {
         if (!isLoopbackAddress(req.socket.remoteAddress)) {
           console.warn('local gateway denied non-loopback client');
+          return send(res, 403, 'forbidden');
+        }
+        if (!isLocalRequest(req.headers)) {
+          console.warn('local gateway denied non-local Host or Origin');
           return send(res, 403, 'forbidden');
         }
         identity = { ok: true, email: 'local' };
