@@ -121,12 +121,19 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
   Object.assign(jwk, { kid, alg: 'RS256', use: 'sig' });
 
   let upstreamCalls = 0;
+  const received = [];
   const upstream = http.createServer(async (req, res) => {
     upstreamCalls += 1;
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    const response = request.method === 'tools/list'
+    received.push({ request, headers: req.headers });
+    const response = request.method === 'server/discover'
+      ? { jsonrpc: '2.0', id: request.id, result: {
+          supportedVersions: ['2026-07-28'], capabilities: { tools: {} },
+          instructions: 'Upstream instructions',
+        } }
+      : request.method === 'tools/list'
       ? {
           jsonrpc: '2.0',
           id: request.id,
@@ -171,6 +178,29 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
   });
   const url = `http://127.0.0.1:${gatewayServer.address().port}/mcp`;
 
+  const modernMeta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' };
+  const modernHeaders = {
+    'content-type': 'application/json',
+    'cf-access-jwt-assertion': token,
+    'mcp-protocol-version': '2026-07-28',
+  };
+  const discover = await fetch(url, {
+    method: 'POST',
+    headers: { ...modernHeaders, 'mcp-method': 'server/discover' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 0, method: 'server/discover', params: { _meta: modernMeta },
+    }),
+  });
+  const discovered = await discover.json();
+  assert.deepEqual(discovered.result.supportedVersions, ['2026-07-28']);
+  assert.notEqual(discovered.result.instructions, 'Upstream instructions');
+  assert.ok(discovered.result.instructions);
+  assert.deepEqual(received[0].request.params._meta, modernMeta);
+  assert.equal(received[0].headers['mcp-method'], 'server/discover');
+  assert.equal(received[0].headers['mcp-protocol-version'], '2026-07-28');
+  assert.equal(received[0].headers['mcp-session-id'], undefined);
+  assert.equal(received[0].headers['cf-access-jwt-assertion'], undefined);
+
   const listed = await fetch(url, {
     method: 'POST',
     headers: {
@@ -182,7 +212,7 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
   const listedBody = await listed.json();
   assert.deepEqual(listedBody.result.tools.map(tool => tool.name), ['option_chain']);
   assert.equal('outputSchema' in listedBody.result.tools[0], false);
-  assert.equal(upstreamCalls, 1);
+  assert.equal(upstreamCalls, 2);
 
   const blocked = await fetch(url, {
     method: 'POST',
@@ -199,7 +229,28 @@ test('gateway filters tools and blocks unknown calls before upstream', async t =
   });
   const blockedBody = await blocked.json();
   assert.equal(blockedBody.error.code, -32601);
-  assert.equal(upstreamCalls, 1);
+  assert.equal(upstreamCalls, 2);
+  const modernListed = await fetch(url, {
+    method: 'POST',
+    headers: { ...modernHeaders, 'mcp-method': 'tools/list' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 4, method: 'tools/list', params: { _meta: modernMeta },
+    }),
+  });
+  const modernListedBody = await modernListed.json();
+  assert.deepEqual(modernListedBody.result.tools.map(tool => tool.name), ['option_chain']);
+  assert.equal(received[2].headers['mcp-session-id'], undefined);
+  assert.equal(upstreamCalls, 3);
+  const modernBlocked = await fetch(url, {
+    method: 'POST',
+    headers: { ...modernHeaders, 'mcp-method': 'tools/call', 'mcp-name': 'not_public' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'not_public', arguments: {}, _meta: modernMeta },
+    }),
+  });
+  assert.equal((await modernBlocked.json()).error.code, -32601);
+  assert.equal(upstreamCalls, 3);
 });
 
 

@@ -51,11 +51,13 @@ class UsageTest(TestCase):
 
         from yfinance_mcp.server import mcp
 
-        async def names():
-            async with Client(mcp) as client:
+        async def names(mode):
+            async with Client(mcp, mode=mode) as client:
                 return {tool.name for tool in await client.list_tools()}
 
-        self.assertEqual(KNOWN_TOOLS | {"tool_usage"}, asyncio.run(names()))
+        for mode in ("2026-07-28", "legacy"):
+            with self.subTest(mode=mode):
+                self.assertEqual(KNOWN_TOOLS | {"tool_usage"}, asyncio.run(names(mode)))
 
     def test_actual_mcp_middleware_counts_success_and_failure(self):
         from fastmcp import Client, FastMCP
