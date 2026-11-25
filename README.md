@@ -354,6 +354,11 @@ A bounded live provider smoke test is available after installation:
 .\.venv\Scripts\python.exe .\scripts\smoke_options.py NVDA
 ```
 
+FastMCP 4 supports the sessionless MCP `2026-07-28` revision alongside older
+initialization-based clients. The gateway preserves the public instructions for both
+`server/discover` and `initialize`; tool allowlisting remains per request. Actual
+client negotiation depends on the client version.
+
 ## Protected remote gateway
 
 Do not expose the unauthenticated Python MCP HTTP endpoint directly to the Internet.
