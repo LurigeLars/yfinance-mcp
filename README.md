@@ -361,6 +361,7 @@ Do not expose the unauthenticated Python MCP HTTP endpoint directly to the Inter
 A separate Node gateway is included for deployments protected by Cloudflare Access. It:
 
 - validates the Access JWT independently.
+- shares one in-flight signing-key refresh; failed refreshes are throttled for 30 seconds and cannot extend expired-key trust.
 - strips client credentials before forwarding.
 - exposes only the ten reviewed read-only tools.
 - applies request/rate limits.
