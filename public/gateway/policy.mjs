@@ -86,7 +86,7 @@ export function rewriteResponse(message, { allowedTools, compactToolResults = fa
       .map(compactToolDefinition);
   }
 
-  if (message.result?.serverInfo) {
+  if (message.result?.serverInfo || Array.isArray(message.result?.supportedVersions)) {
     const instructions = loadInstructions();
     if (instructions) message.result.instructions = instructions;
   }
