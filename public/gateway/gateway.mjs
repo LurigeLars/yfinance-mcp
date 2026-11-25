@@ -132,32 +132,41 @@ function b64json(segment) {
 }
 
 export function createAccessVerifier(config, fetchImpl = fetch) {
-  const cache = { keys: new Map(), fetchedAt: 0, attemptedAt: 0 };
+  const cache = { keys: new Map(), fetchedAt: null, attemptedAt: null, pending: null };
+  const fresh = () => cache.fetchedAt !== null && Date.now() - cache.fetchedAt <= 3_600_000;
 
   async function accessKey(kid) {
-    const now = Date.now();
-    const stale = cache.fetchedAt === 0 || now - cache.fetchedAt > 3_600_000;
-    const missingAndRefreshable = !cache.keys.has(kid) && (cache.fetchedAt === 0 || now - cache.fetchedAt > 30_000);
-    // At most one certs fetch per 30 s, also when it fails: otherwise every request during a
-    // Cloudflare outage waits 5 s on a new fetch instead of failing closed at once.
-    const mayFetch = now - cache.attemptedAt > 30_000;
+    if (fresh() && cache.keys.has(kid)) return cache.keys.get(kid);
 
-    if ((stale || missingAndRefreshable) && mayFetch) {
+    // Share one in-flight fetch. Limit failed refreshes as well as successful
+    // ones; never advance the successful timestamp on a failed fetch.
+    const now = Date.now();
+    if (cache.pending) {
+      await cache.pending;
+    } else if (cache.attemptedAt === null || now - cache.attemptedAt >= 30_000) {
       cache.attemptedAt = now;
-      // ACCESS_TEAM_DOMAIN is constrained to one *.cloudflareaccess.com team label.
-      // codeql[js/request-forgery]
-      const response = await fetchImpl(`${config.accessIssuer}/cdn-cgi/access/certs`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) throw new Error(`certs HTTP ${response.status}`);
-      const { keys = [] } = await response.json();
-      cache.keys = new Map(
-        keys.map(key => [key.kid, crypto.createPublicKey({ key, format: 'jwk' })]),
-      );
-      cache.fetchedAt = now;
+      cache.pending = (async () => {
+        // ACCESS_TEAM_DOMAIN is constrained to one *.cloudflareaccess.com team label.
+        // codeql[js/request-forgery]
+        const response = await fetchImpl(`${config.accessIssuer}/cdn-cgi/access/certs`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) throw new Error(`certs HTTP ${response.status}`);
+        const { keys = [] } = await response.json();
+        cache.keys = new Map(
+          keys.map(key => [key.kid, crypto.createPublicKey({ key, format: 'jwk' })]),
+        );
+        cache.fetchedAt = Date.now();
+      })();
+      try {
+        await cache.pending;
+      } finally {
+        cache.pending = null;
+      }
     }
 
-    return cache.keys.get(kid);
+    // A failed refresh cannot extend trust in expired signing keys.
+    return fresh() ? cache.keys.get(kid) : undefined;
   }
 
   return async token => {
@@ -168,7 +177,7 @@ export function createAccessVerifier(config, fetchImpl = fetch) {
       const header = b64json(parts[0]);
       const claims = b64json(parts[1]);
 
-      if (header.alg !== 'RS256') return { ok: false, reason: `alg ${header.alg}` };
+      if (header.alg !== 'RS256') return { ok: false, reason: 'unsupported alg' };
       if (!header.kid) return { ok: false, reason: 'missing kid' };
 
       const key = await accessKey(header.kid);
@@ -191,12 +200,12 @@ export function createAccessVerifier(config, fetchImpl = fetch) {
 
       const email = String(claims.email ?? '').toLowerCase();
       if (!config.allowedEmails.has(email)) {
-        return { ok: false, reason: `email not allowed: ${email || '(none)'}` };
+        return { ok: false, reason: 'email not allowed' };
       }
 
       return { ok: true, email };
-    } catch (error) {
-      return { ok: false, reason: `verify error: ${error.message}` };
+    } catch {
+      return { ok: false, reason: 'verify error' };
     }
   };
 }
