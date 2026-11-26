@@ -361,6 +361,9 @@ client negotiation depends on the client version.
 
 ## Protected remote gateway
 
+The optional Docker/Cloudflare gateway uses the shared local-only `dockerlocal-gateway:node-26.13.1-r1` image. Provision it first with the reviewed `build-gateway-runtime.ps1` in [Docker-MCP](https://github.com/LurigeLars/Docker-MCP) (pinned Node base, Alpine security upgrades, npm removed, immutable Scout review). The image is never pulled from a registry. Independent deployments can build and review that same versioned image locally from the recipe before starting Compose; normal non-Docker MCP operation is unchanged.
+
+
 Do not expose the unauthenticated Python MCP HTTP endpoint directly to the Internet.
 
 A separate Node gateway is included for deployments protected by Cloudflare Access. It:
